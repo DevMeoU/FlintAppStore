@@ -1,0 +1,40 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-lc",
+                "exec \"$PWD/../scripts/build-game.sh\" --app \"$PWD\" --game \"$PWD/../SrcGame/diamond_EUB.jar\""
+            ],
+            "presentation": {
+                "echo": false,
+                "reveal": "always",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": {
+                "owner": "java",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": [
+                    {
+                        "regexp": "^(.*\\.java):(\\d+):\\s(error|warning):\\s(.*)$",
+                        "file": 1,
+                        "line": 2,
+                        "severity": 3,
+                        "message": 4
+                    }
+                ]
+            }
+        }
+    ]
+}

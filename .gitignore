@@ -1,0 +1,8 @@
+build/
+*/bin/
+*/stage/
+*/debug-manifest/
+*/.tmp/
+*/tools/*.class
+.flintappstore.local.json
+assets/

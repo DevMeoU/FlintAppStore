@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "flint-debug",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "name": "Debug with FlintJVM",
+            "cwd": "${workspaceFolder}",
+            "port": "${config:flintvn-extentions.serialPort}",
+            "install": true,
+            "program": "bin/jar/FlintApp.jar",
+            "mainClass": "Main",
+            "classPath": [
+                "${workspaceFolder}/bin/build"
+            ],
+            "sourcePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/../../FlintOS/FlintJ2ME/src",
+                "${workspaceFolder}/../../FlintJDK/src/java.base",
+                "${workspaceFolder}/../../FlintJDK/src/flint.drawing"
+            ],
+            "modulePath": [
+                "${workspaceFolder}/../../FlintOS/files/lib/java.base.jar",
+                "${workspaceFolder}/../../FlintOS/files/lib/j2me.jar",
+                "${workspaceFolder}/../../FlintOS/files/lib/flintos.midp.jar",
+                "${workspaceFolder}/../../FlintOS/files/lib/m3g.jar",
+                "${workspaceFolder}/../../FlintOS/files/lib/flint.drawing.jar",
+                "${workspaceFolder}/../../FlintOS/files/lib/flintos.device.jar"
+            ]
+        }
+    ]
+}

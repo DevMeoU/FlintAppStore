@@ -1,0 +1,12 @@
+# Decompiled game source keeps original whitespace for debugger mapping.
+Ancient-Empires-II/Makefile whitespace=-trailing-space
+Ancient-Empires-II/src/** whitespace=-trailing-space
+Ancient-Empires-II/src-full-debug/** whitespace=-trailing-space
+Diamond-Rush-EUB/src/** whitespace=-trailing-space
+Diamond-Rush-EUB/src-full-debug/** whitespace=-trailing-space
+Diamond-Rush-Nokia-E50/src/** whitespace=-trailing-space
+Diamond-Rush-Nokia-E50/src-full-debug/** whitespace=-trailing-space
+GTA-5-MOD/src/** whitespace=-trailing-space
+GTA-5-MOD/src-full-debug/** whitespace=-trailing-space
+The-Fight-3D/src/** whitespace=-trailing-space
+The-Fight-3D/src-full-debug/** whitespace=-trailing-space

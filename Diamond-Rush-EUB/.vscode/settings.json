@@ -1,0 +1,13 @@
+{
+    "flintvn-extentions.serialPort": "COM9",
+    "java.project.sourcePaths": [
+        "src",
+        "../../FlintOS/FlintJ2ME/src"
+    ],
+    "java.project.outputPath": "bin/vscode-build",
+    "java.project.referencedLibraries": [
+        "../../FlintOS/files/lib/*.jar",
+        "stage"
+    ],
+    "flintvn-extentions.board": "ESP32"
+}
