@@ -180,7 +180,7 @@ validate_flintos() {
         files/lib/java.base.jar
         files/lib/flint.drawing.jar
         files/lib/flintos.device.jar
-        files/lib/midp.jar
+        files/lib/j2me.jar
         files/lib/flintos.midp.jar
         files/lib/m3g.jar
     )
