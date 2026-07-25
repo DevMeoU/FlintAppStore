@@ -1,26 +1,36 @@
-import javax.microedition.lcdui.DisplayAccess;
-import javax.microedition.midlet.MIDletLifecycle;
+import flintos.midp.DisplayBridge;
+import flintos.midp.TouchBridge;
+import flintos.midp.MIDletLifecycle;
+import javax.microedition.midlet.MIDlet;
 import javax.microedition.rms.RecordStore;
 
-public class Main {
+public final class Main {
     public static void main(String[] args) throws Exception {
-        System.setProperty("flint.resource.dir", "Ancient-Empires-II_J2ME_EN_v10");
-        System.setProperty("flint.lcdui.width", "240");
-        System.setProperty("flint.lcdui.height", "320");
-        System.setProperty("flint.lcdui.present", "rotate270");
-        System.setProperty("flint.lcdui.maxfps", "25");
+        System.out.println("[Main] 1. MIDletLifecycle.init()");
+        MIDletLifecycle.init();
 
-        DisplayAccess.initScreen();
-        board.Touch.init();
-        board.Audio.init();
+        System.out.println("[Main] 2. DisplayBridge.init()");
+        DisplayBridge.init(240, 320, "rotate270");
 
+        System.out.println("[Main] 3. TouchBridge.init()");
+        TouchBridge.init();
+
+        System.out.println("[Main] 4. RecordStore.openRecordStore()");
         RecordStore.openRecordStore("Preferences", true).closeRecordStore();
 
-        // AMS loads suite properties before constructing b, then starts it.
-        MIDletLifecycle.main(new String[]{"b"});
+        System.out.println("[Main] 5. Class.forName(\"b\")");
+        Class clazz = Class.forName("b");
 
-        while(true) {
-            Thread.sleep(1000);
-        }
+        System.out.println("[Main] 6. newInstance()");
+        MIDlet midlet = (MIDlet) clazz.newInstance();
+
+        System.out.println("[Main] 7. MIDletLifecycle.attach()");
+        MIDletLifecycle.attach(midlet);
+
+        System.out.println("[Main] 8. MIDletLifecycle.start()");
+        MIDletLifecycle.start(midlet);
+
+        System.out.println("[Main] 9. Loop");
+        while(true) Thread.sleep(1000);
     }
 }

@@ -180,9 +180,7 @@ validate_flintos() {
         files/lib/java.base.jar
         files/lib/flint.drawing.jar
         files/lib/flintos.device.jar
-        files/lib/j2me.jar
         files/lib/flintos.midp.jar
-        files/lib/m3g.jar
     )
     local path
     for path in "${required[@]}"; do
@@ -347,10 +345,9 @@ GAME_JAR_OUT="$GAME_BIN/$GAME_ID.jar"
 JAVA_BASE="$FLINTOS_ROOT/files/lib/java.base.jar"
 DRAWING="$FLINTOS_ROOT/files/lib/flint.drawing.jar"
 DEVICE="$FLINTOS_ROOT/files/lib/flintos.device.jar"
-MIDP="$FLINTOS_ROOT/files/lib/j2me.jar"
 MIDP_RUNTIME="$FLINTOS_ROOT/files/lib/flintos.midp.jar"
 M3G="$FLINTOS_ROOT/files/lib/m3g.jar"
-CLASSPATH="$JAVA_BASE:$MIDP:$MIDP_RUNTIME:$M3G:$DRAWING:$DEVICE"
+CLASSPATH="$JAVA_BASE:$MIDP_RUNTIME:$M3G:$DRAWING:$DEVICE"
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$EXTRACT_DIR" "$GAME_BIN" "$STAGE_DIR" "$GENERATED_SRC_DIR"
@@ -443,18 +440,42 @@ while IFS= read -r -d '' source; do
 done
 
 cat > "$MAIN_SOURCE" <<EOF
-import javax.microedition.lcdui.DisplayAccess;
-import javax.microedition.midlet.MIDletLifecycle;
+import javax.microedition.lcdui.Display;
+import flintos.midp.DisplayBridge;
+import flintos.midp.TouchBridge;
+import javax.microedition.midlet.MIDlet;
 import javax.microedition.rms.RecordStore;
 
 public final class Main {
     public static void main(String[] args) throws Exception {
-        System.setProperty("flint.lcdui.maxfps", "$(escape_java "$MAX_FPS")");
-        DisplayAccess.initScreen($WIDTH, $HEIGHT, "$(escape_java "$PRESENT")");
-        board.Touch.init();
-        board.Audio.init();
+        System.out.println("[Main] 1. DisplayBridge.init()");
+        DisplayBridge.init();
+
+        System.out.println("[Main] 2. DisplayBridge.width()");
+        int w = DisplayBridge.width();
+
+        System.out.println("[Main] 3. DisplayBridge.height()");
+        int h = DisplayBridge.height();
+
+        System.out.println("[Main] 4. TouchBridge.init()");
+        TouchBridge.init();
+
+        System.out.println("[Main] 5. Display.initScreen()");
+        Display.initScreen();
+
+        System.out.println("[Main] 6. RecordStore");
         RecordStore.openRecordStore("Preferences", true).closeRecordStore();
-        MIDletLifecycle.main(new String[]{"$(escape_java "$MIDLET_CLASS")"});
+
+        System.out.println("[Main] 7. Class.forName(\"$(escape_java "$MIDLET_CLASS")\")");
+        Class clazz = Class.forName("$(escape_java "$MIDLET_CLASS")");
+
+        System.out.println("[Main] 8. newInstance()");
+        MIDlet midlet = (MIDlet) clazz.newInstance();
+
+        System.out.println("[Main] 9. midlet.startApp0()");
+        midlet.startApp0();
+
+        System.out.println("[Main] 10. Loop");
         while(true) Thread.sleep(1000);
     }
 }
@@ -524,7 +545,7 @@ if [ "$SKIP_DEBUG_MAP" -eq 0 ]; then
             -d "$(java_path "$TOOLS_DIR")" \
             "$(java_path "$MAPPER_SOURCE")"
         MAPPER_CP="$TOOLS_DIR:$CFR_JAR"
-        DECOMPILER_CP="$STAGE_DIR:$MIDP:$MIDP_RUNTIME:$M3G:$DRAWING:$DEVICE"
+        DECOMPILER_CP="$STAGE_DIR:$MIDP_RUNTIME:$M3G:$DRAWING:$DEVICE"
         find "$STAGE_DIR" -type f -name '*.class' ! -name 'Main.class' -print0 |
         while IFS= read -r -d '' class_file; do
             relative=${class_file#"$STAGE_DIR/"}
