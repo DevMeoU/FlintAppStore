@@ -1,0 +1,23 @@
+name: Flint Store checks
+on:
+  push:
+    paths: ["store/**", "render.yaml", ".github/workflows/store.yml"]
+  pull_request:
+    paths: ["store/**", "render.yaml", ".github/workflows/store.yml"]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: store
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          cache-dependency-path: store/package-lock.json
+      - run: npm ci
+      - run: npm test

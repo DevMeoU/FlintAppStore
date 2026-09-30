@@ -1,5 +1,8 @@
 # Flint App Store
 
+## Kho ứng dụng JAR trên database
+
+Web/backend nằm trong [`store/`](store/README.md): kho app FlintOS với JAR trong database, tải miễn phí và thanh toán mô phỏng cho app trả phí. Giao diện tham khảo Microsoft Store. Xem [triển khai thử Render + Turso](store/docs/deploy-render-turso.md); cấu hình Blueprint tại `render.yaml`.
 Kho game J2ME dùng để build, nạp thử và debug với Flint debugger. Repository này không là submodule, không sửa mã nguồn FlintOS, và chỉ đọc SDK/runtime từ FlintOS.
 
 ## Cấu trúc

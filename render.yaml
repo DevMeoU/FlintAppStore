@@ -1,0 +1,44 @@
+# One free web instance; User/App/Order run internally on loopback ports.
+# Turso URLs and database-scoped tokens are supplied in Render, never in Git.
+services:
+  - type: web
+    name: flint-app-store-demo
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: store
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: "22.20.0"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEPLOYMENT_MODE
+        value: demo
+      - key: PAYMENT_MODE
+        value: demo
+      - key: REQUIRE_TURSO
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INTERNAL_SERVICE_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: TURSO_USER_SERVICE_URL
+        sync: false
+      - key: TURSO_USER_SERVICE_TOKEN
+        sync: false
+      - key: TURSO_APP_SERVICE_URL
+        sync: false
+      - key: TURSO_APP_SERVICE_TOKEN
+        sync: false
+      - key: TURSO_ORDER_SERVICE_URL
+        sync: false
+      - key: TURSO_ORDER_SERVICE_TOKEN
+        sync: false
