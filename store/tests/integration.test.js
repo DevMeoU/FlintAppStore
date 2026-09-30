@@ -32,10 +32,11 @@ async function stop() {
 }
 async function request(url, token, body, method, headers = {}) {
   const response = await fetch(base + '/api' + url, { method: method || (body === undefined ? 'GET' : 'POST'), headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
-  return { status: response.status, body: await response.json() };
+  const cookie=response.headers.getSetCookie().find(c=>c.startsWith('flint_session='));
+  return { status: response.status, body: await response.json(), session:cookie?decodeURIComponent(cookie.split(';')[0].slice('flint_session='.length)):undefined, cookie:cookie?.split(';')[0], headers:response.headers };
 }
-async function upload(id, token, bytes, version = '1.0.0') {
-  const r = await fetch(base + `/api/apps/${id}/releases`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/java-archive', 'X-App-Version': version }, body: bytes });
+async function upload(id, token, bytes, version = '1.0.0', channel='STABLE') {
+  const r = await fetch(base + `/api/apps/${id}/releases`, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/java-archive', 'X-App-Version': version,'X-Release-Channel':channel }, body: bytes });
   return { status: r.status, body: await r.json() };
 }
 function jar(version) {
@@ -50,14 +51,14 @@ async function run() {
   const jar1 = jar(1), jar2 = jar(2);
   await check('web and 3 services ready', async () => { assert.equal((await fetch(base + '/')).status, 200); assert.equal((await request('/health')).body.services, 3); });
   await check('admin and customer log in', async () => {
-    const a = await request('/login', null, { username: 'admin', password: '123456' }); assert.equal(a.status, 200); admin = a.body.token;
-    const c = await request('/auth/login', null, { username: 'customer', password: '123456' }); assert.equal(c.status, 200); customer = c.body.token;
+    const a = await request('/login', null, { username: 'admin', password: '123456' }); assert.equal(a.status, 200); admin = a.session;
+    const c = await request('/auth/login', null, { username: 'customer', password: '123456' }); assert.equal(c.status, 200); customer = c.session;
   });
   await check('invalid password rejected', async () => assert.equal((await request('/login', null, { username: 'admin', password: 'wrong' })).status, 401));
-  await check('registration cannot assign admin role', async () => { const r = await request('/register', null, { username: 'other', fullName: 'Other User', password: '123456', role: 'ADMIN' }); assert.equal(r.status, 201); assert.equal(r.body.user.role, 'CUSTOMER'); other = r.body.token; });
-  await check('duplicate account rejected', async () => assert.equal((await request('/register', null, { username: 'OTHER', fullName: 'Other User', password: '123456' })).status, 409));
+  await check('registration cannot assign admin role', async () => { const r = await request('/register', null, { username: 'other', fullName: 'Other User', password: '1234567890', role: 'ADMIN' }); assert.equal(r.status, 201); assert.equal(r.body.user.role, 'CUSTOMER'); other = r.session; });
+  await check('duplicate account rejected', async () => assert.equal((await request('/register', null, { username: 'OTHER', fullName: 'Other User', password: '1234567890' })).status, 409));
   await check('forged identity cannot create app', async () => assert.equal((await request('/apps', null, { slug: 'evil', name: 'Evil' }, 'POST', { 'x-user-id': '1', 'x-user-role': 'ADMIN' })).status, 401));
-  await check('customer cannot create app', async () => assert.equal((await request('/apps', customer, { slug: 'evil', name: 'Evil' })).status, 403));
+  await check('anonymous cannot submit an app', async () => assert.equal((await request('/apps', null, { slug: 'evil', name: 'Evil' })).status, 401));
   await check('admin creates free and paid apps', async () => {
     const f = await request('/apps', admin, { slug: 'free-app', name: 'Free app', priceVnd: 0 }); assert.equal(f.status, 201); free = f.body.id;
     const p = await request('/apps', admin, { slug: 'paid-app', name: 'Paid app', priceVnd: 25000 }); assert.equal(p.status, 201); paid = p.body.id;
@@ -158,6 +159,108 @@ async function run() {
   await check('direct service does not trust forged user headers', async () => {
     const r = await fetch(`http://127.0.0.1:${basePort + 2}/apps`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': '1', 'x-user-role': 'ADMIN' }, body: JSON.stringify({ name: 'Forged', slug: 'forged' }) }); assert.equal(r.status, 401);
     const rights = await fetch(`http://127.0.0.1:${basePort + 3}/internal/entitlements?userId=1&appId=${paid}`); assert.equal(rights.status, 403);
+  });
+  let submitted, secondSubmission, submittedStable, submittedBeta, betaEnrollment, betaOnly, betaOnlyRelease;
+  await check('every user can submit an app but cannot forge ownership or approval',async()=>{
+    const r=await request('/apps',customer,{name:'Publisher app',slug:'publisher-app',priceVnd:25000,published:true,owner_user_id:1,review_status:'APPROVED'});
+    assert.equal(r.status,201);submitted=r.body.id;assert.equal(r.body.owner_user_id,2);assert.equal(r.body.review_status,'PENDING');assert.equal(r.body.published,0);
+    const second=await request('/apps',customer,{name:'Second app',slug:'second-app'});assert.equal(second.status,201);secondSubmission=second.body.id;
+    assert.equal((await request('/apps/'+submitted)).status,404);assert.equal((await request('/apps/'+submitted,other)).status,404);
+    assert.equal((await request('/apps/'+submitted,customer)).status,200);assert.equal((await request('/apps/'+submitted,admin)).status,200);
+    assert.ok(!(await request('/apps')).body.some(a=>a.id===submitted));
+  });
+  await check('publisher workspace is scoped to each account and cross-owner writes/downloads are denied',async()=>{
+    const own=(await request('/publisher/apps',customer)).body;assert.ok(own.some(a=>a.id===submitted));assert.ok(own.every(a=>a.owner_user_id===2));
+    assert.ok(!(await request('/publisher/apps',other)).body.some(a=>a.id===submitted));
+    assert.equal((await request('/apps/'+submitted,other,{name:'Hijacked'},'PUT')).status,403);
+    assert.equal((await upload(submitted,other,jar1)).status,403);
+    assert.equal((await request('/apps/'+submitted,customer,{published:true},'PUT')).status,403);
+  });
+  await check('publisher uploads stable and beta JARs into individual review queues',async()=>{
+    const stable=await upload(submitted,customer,jar1,'1.0.0');assert.equal(stable.status,201);submittedStable=stable.body.id;assert.equal(stable.body.review_status,'PENDING');
+    const beta=await upload(submitted,customer,jar2,'2.0.0-beta.1','BETA');assert.equal(beta.status,201);submittedBeta=beta.body.id;assert.equal(beta.body.review_status,'PENDING');
+    assert.equal((await upload(submitted,customer,jar1,'invalid-channel','CANARY')).status,400);
+    assert.equal((await request(`/apps/${submitted}/releases/${submittedStable}/review-download`,other)).status,404);
+    const inspected=await fetch(base+`/api/apps/${submitted}/releases/${submittedBeta}/review-download`,{headers:{Authorization:'Bearer '+admin}});assert.equal(inspected.status,200);assert.deepEqual(Buffer.from(await inspected.arrayBuffer()),jar2);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`)).status,404);
+  });
+  await check('only admin can review apps and JARs; approval does not grant account-wide publishing',async()=>{
+    assert.equal((await request(`/apps/${submitted}/review`,customer,{status:'APPROVED'},'PATCH')).status,403);
+    assert.equal((await request(`/apps/${submitted}/releases/${submittedStable}/review`,customer,{status:'APPROVED'},'PATCH')).status,403);
+    assert.equal((await request(`/apps/${submitted}/review`,admin,{status:'APPROVED'},'PATCH')).status,200);
+    const noReleases=(await request('/apps/'+submitted)).body;assert.equal(noReleases.releases.length,0);assert.equal(noReleases.latest_release_id,null);
+    assert.equal((await request('/apps/'+secondSubmission)).status,404);assert.equal((await request('/apps/'+secondSubmission,customer)).body.review_status,'PENDING');
+    for(const id of [submittedStable,submittedBeta])assert.equal((await request(`/apps/${submitted}/releases/${id}/review`,admin,{status:'APPROVED'},'PATCH')).status,200);
+    assert.equal((await request(`/apps/${paid}/releases/${submittedBeta}/review`,admin,{status:'APPROVED'},'PATCH')).status,404);
+  });
+  await check('approved beta never replaces stable latest or bypasses enrollment',async()=>{
+    const row=(await request('/apps/'+submitted)).body;assert.equal(row.latest_release_id,submittedStable);assert.equal(row.latest_beta_release_id,submittedBeta);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`)).status,401);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`,{headers:{Authorization:'Bearer '+other}})).status,403);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download`,{headers:{Authorization:'Bearer '+other}})).status,402);
+  });
+  await check('beta signup is idempotent, tied to current user, and stays pending until admin approval',async()=>{
+    const rs=await Promise.all(Array.from({length:4},()=>request(`/apps/${submitted}/beta-enrollment`,other,{user_id:2,status:'APPROVED'})));
+    rs.forEach(r=>{assert.equal(r.status,200);assert.equal(r.body.status,'PENDING');assert.equal(r.body.user_id,3);});betaEnrollment=rs[0].body.id;rs.forEach(r=>assert.equal(r.body.id,betaEnrollment));
+    assert.equal((await request('/beta-enrollments',other)).status,403);
+    assert.equal((await request('/beta-enrollments/'+betaEnrollment,customer,{status:'APPROVED'},'PATCH')).status,403);
+    assert.equal((await request(`/apps/${submitted}/beta-enrollment`,customer)).body.status,'NOT_REGISTERED');
+    assert.equal((await request('/beta-enrollments/'+betaEnrollment,admin,{status:'APPROVED'},'PATCH')).status,200);
+  });
+  await check('approved beta member still must pay; exact bytes unlock after payment',async()=>{
+    const path=base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`,headers={Authorization:'Bearer '+other};
+    assert.equal((await fetch(path,{headers})).status,402);
+    const order=(await request('/orders',other,{appId:submitted})).body;assert.equal(order.status,'PENDING');
+    assert.equal((await request(`/orders/${order.id}/pay`,other,{})).status,200);
+    const r=await fetch(path,{headers});assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),jar2);
+    const stable=await fetch(base+`/api/apps/${submitted}/download`,{headers});assert.deepEqual(Buffer.from(await stable.arrayBuffer()),jar1);
+  });
+  await check('beta approval can be revoked without granting other accounts access',async()=>{
+    assert.equal((await request('/beta-enrollments/'+betaEnrollment,admin,{status:'REJECTED',note:'Beta ended'},'PATCH')).status,200);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`,{headers:{Authorization:'Bearer '+other}})).status,403);
+    assert.equal((await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`,{headers:{Authorization:'Bearer '+customer}})).status,403);
+  });
+  await check('free beta-only app is listed but requires enrollment; default stable download has no beta fallback',async()=>{
+    betaOnly=(await request('/apps',admin,{name:'Only beta',slug:'only-beta'})).body.id;
+    betaOnlyRelease=(await upload(betaOnly,admin,jar2,'0.1-beta','BETA')).body.id;
+    const row=(await request('/apps/'+betaOnly)).body;assert.equal(row.latest_release_id,null);assert.equal(row.latest_beta_release_id,betaOnlyRelease);
+    assert.equal((await fetch(base+`/api/apps/${betaOnly}/download`)).status,404);
+    const enrollment=(await request(`/apps/${betaOnly}/beta-enrollment`,customer,{})).body;
+    await request('/beta-enrollments/'+enrollment.id,admin,{status:'APPROVED'},'PATCH');
+    const r=await fetch(base+`/api/apps/${betaOnly}/download?releaseId=${betaOnlyRelease}`,{headers:{Authorization:'Bearer '+customer}});assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),jar2);
+  });
+  await check('editing published metadata returns that app to review and new JAR remains pending',async()=>{
+    const r=await request('/apps/'+submitted,customer,{description:'Updated by publisher',review_status:'APPROVED',owner_user_id:1},'PUT');assert.equal(r.status,200);assert.equal(r.body.review_status,'PENDING');assert.equal(r.body.owner_user_id,2);
+    assert.equal((await request('/apps/'+submitted)).status,404);
+    const next=await upload(submitted,customer,jar1,'3.0.0');assert.equal(next.body.review_status,'PENDING');
+    assert.equal((await request('/apps/'+submitted,admin,{published:true},'PUT')).status,409);
+  });
+  await check('cookie sessions are HttpOnly, JWT is absent from JSON, and CSRF cross-site requests are blocked',async()=>{
+    const login=await request('/login',null,{username:'customer',password:'123456'});assert.equal(login.status,200);assert.ok(!('token' in login.body));
+    const cookie=login.headers.get('set-cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Lax/);
+    assert.equal((await request('/users/me',null,undefined,'GET',{Cookie:login.cookie})).status,200);
+    assert.equal((await request('/apps',null,{name:'Blocked',slug:'blocked-csrf'},'POST',{Cookie:login.cookie})).status,403);
+    assert.equal((await request('/logout',null,{},'POST',{Cookie:login.cookie,'X-Flint-Request':'1',Origin:'https://evil.invalid'})).status,403);
+    assert.equal((await request('/logout',null,{},'POST',{Cookie:login.cookie,'X-Flint-Request':'1',Origin:base})).status,200);
+    assert.equal((await request('/users/me',login.session)).status,401);
+    assert.equal((await request('/apps',login.session,{name:'Revoked',slug:'revoked'})).status,401);
+  });
+  await check('server resolves role from database rather than stale JWT claims',async()=>{
+    const jwt=require('jsonwebtoken'),claims=jwt.decode(other);
+    const forged=jwt.sign({id:claims.id,sid:claims.sid,role:'ADMIN'},'test-jwt-only',{issuer:'flint-store',audience:'flint-store',expiresIn:60});
+    assert.equal((await request('/apps/'+secondSubmission+'/review',forged,{status:'APPROVED'},'PATCH')).status,403);
+    const legacy=jwt.sign({id:1,role:'ADMIN'},'test-jwt-only',{expiresIn:60});assert.equal((await request('/users/me',legacy)).status,401);
+  });
+  await check('weak/oversized passwords and reserved social usernames are rejected; OAuth stays disabled without credentials',async()=>{
+    for(const password of ['short', 'é'.repeat(37)])assert.equal((await request('/register',null,{username:'bad_password',fullName:'Bad Password',password})).status,400);
+    assert.equal((await request('/register',null,{username:'social_reserved',fullName:'Reserved',password:'valid-password-10'})).status,400);
+    const providers=(await request('/auth/providers')).body;assert.deepEqual(providers.map(p=>p.id),['google','facebook','github']);assert.ok(providers.every(p=>!p.enabled));
+    assert.equal((await request('/auth/oauth/google/start')).status,503);
+    assert.equal((await request('/auth/oauth/github/callback?state=bad&code=bad')).status,400);
+  });
+  await check('login brute force is rate limited without exposing whether username exists',async()=>{
+    for(let i=0;i<10;i++)assert.equal((await request('/login',null,{username:'not_existing',password:'invalid-pass'})).status,401);
+    assert.equal((await request('/login',null,{username:'not_existing',password:'invalid-pass'})).status,429);
   });
   await check('database survives restart and manual mode disables demo pay', async () => {
     await stop(); await start('manual');

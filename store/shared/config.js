@@ -7,6 +7,7 @@ const isTest = process.env.NODE_ENV === 'test';
 const production = process.env.NODE_ENV === 'production';
 const publicDemo = production && process.env.DEPLOYMENT_MODE === 'demo';
 if (production && (!process.env.JWT_SECRET || !process.env.INTERNAL_SERVICE_SECRET || !process.env.ADMIN_PASSWORD)) throw new Error('Production requires JWT_SECRET, INTERNAL_SERVICE_SECRET and ADMIN_PASSWORD');
+if (production && (process.env.JWT_SECRET.length < 32 || process.env.INTERNAL_SERVICE_SECRET.length < 32 || process.env.ADMIN_PASSWORD.length < 12)) throw new Error('Production secrets require JWT/internal >=32 characters and admin password >=12');
 const config = {
   rootDir, isTest, production, publicDemo,
   dataDir: process.env.DATA_DIR || path.join(rootDir, 'data'),
@@ -19,8 +20,13 @@ const config = {
   paymentMode: process.env.PAYMENT_MODE || (production ? 'manual' : 'demo'),
   gatewayHost: process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1'),
   maxJarBytes: 25 * 1024 * 1024,
+  publicOrigin: process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${process.env.PORT || process.env.GATEWAY_PORT || (isTest ? 4330 : 3300)}`,
+  sessionSeconds: 8 * 60 * 60,
+  cookieName: production ? '__Host-flint_session' : 'flint_session',
   dbPath(name) { return path.join(this.dataDir, `${name}${isTest ? '-test' : ''}.db`); }
 };
+const publicUrl = new URL(config.publicOrigin);
+if (publicUrl.origin !== config.publicOrigin || publicUrl.username || publicUrl.password || (production && publicUrl.protocol !== 'https:') || (!production && publicUrl.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(publicUrl.hostname))) throw new Error('PUBLIC_ORIGIN must be an exact HTTPS origin (loopback HTTP allowed locally)');
 if (!['demo', 'manual'].includes(config.paymentMode) || (production && config.paymentMode === 'demo' && !publicDemo)) throw new Error('Demo payments require DEPLOYMENT_MODE=demo in production');
 if (process.env.REQUIRE_TURSO === 'true' && !isTest) {
   for (const name of ['USER_SERVICE','APP_SERVICE','ORDER_SERVICE']) {

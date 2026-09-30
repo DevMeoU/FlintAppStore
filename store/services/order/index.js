@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { openDatabase } = require('../../shared/db');
-const { requireUser, internal } = require('../../shared/auth');
+const { requireUser, internal, authenticate } = require('../../shared/auth');
 const { route, errors, service, listen } = require('../../shared/http');
 const config = require('../../shared/config');
 const { paymentToken, validPaymentToken, publicInvoice } = require('../../shared/payment');
@@ -17,6 +17,7 @@ async function start() {
   CREATE UNIQUE INDEX IF NOT EXISTS one_open_or_paid_order ON orders(user_id,app_id) WHERE status IN ('PENDING','PAID');
   CREATE INDEX IF NOT EXISTS rights ON orders(user_id,app_id,status);`);
   const app = express(); app.use(express.json({ limit: '32kb' }));
+  app.use(authenticate());
   app.get('/internal/entitlements', internal, route(async (req, res) => {
     const row = await db.get("SELECT id FROM orders WHERE user_id=? AND app_id=? AND status='PAID'", [req.query.userId, req.query.appId]);
     res.json({ owned: !!row });
@@ -32,7 +33,7 @@ async function start() {
     let item;
     try { item = await service(config.appServicePort, `/internal/apps/${appId}`); }
     catch { return res.status(503).json({ error: 'Chưa đọc được giá app' }); }
-    if (!item?.published || !item.latest_release_id) return res.status(404).json({ error: 'App chưa phát hành JAR' });
+    if (!item?.published || item.review_status !== 'APPROVED' || (!item.latest_release_id && !item.latest_beta_release_id)) return res.status(404).json({ error: 'App chưa phát hành JAR' });
     if (!item.price_vnd) return res.status(400).json({ error: 'App miễn phí có thể tải trực tiếp' });
     const existing = await db.get("SELECT * FROM orders WHERE user_id=? AND app_id=? AND status IN ('PENDING','PAID')", [user.id, appId]);
     if (existing) return res.json(existing);

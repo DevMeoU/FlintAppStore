@@ -18,6 +18,27 @@ async function createAppDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT, app_id INTEGER NOT NULL, release_id INTEGER NOT NULL,
       user_id INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`);
+  // Additive migration: preserve legacy app IDs, releases and immutable JAR BLOBs.
+  async function addColumns(table, columns) {
+    const present = new Set((await db.all(`PRAGMA table_info(${table})`)).map(c => c.name));
+    for (const [name, definition] of Object.entries(columns)) if (!present.has(name)) await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  }
+  await addColumns('apps', {
+    owner_user_id: 'INTEGER', review_status: "TEXT NOT NULL DEFAULT 'APPROVED' CHECK(review_status IN ('PENDING','APPROVED','REJECTED'))",
+    review_note: "TEXT NOT NULL DEFAULT ''", reviewed_by: 'INTEGER', reviewed_at: 'TEXT'
+  });
+  await addColumns('releases', {
+    channel: "TEXT NOT NULL DEFAULT 'STABLE' CHECK(channel IN ('STABLE','BETA'))",
+    review_status: "TEXT NOT NULL DEFAULT 'APPROVED' CHECK(review_status IN ('PENDING','APPROVED','REJECTED'))",
+    review_note: "TEXT NOT NULL DEFAULT ''", reviewed_by: 'INTEGER', reviewed_at: 'TEXT'
+  });
+  await db.exec(`CREATE TABLE IF NOT EXISTS beta_enrollments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, app_id INTEGER NOT NULL REFERENCES apps(id), user_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','APPROVED','REJECTED')),
+    review_note TEXT NOT NULL DEFAULT '', reviewed_by INTEGER, reviewed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(app_id,user_id)
+  ); CREATE INDEX IF NOT EXISTS release_channel ON releases(app_id,channel,review_status,id);
+  CREATE INDEX IF NOT EXISTS beta_queue ON beta_enrollments(status,app_id);`);
   return db;
 }
 module.exports = { createAppDatabase };

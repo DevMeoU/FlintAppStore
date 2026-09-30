@@ -1,6 +1,6 @@
 # Flint App Store
 
-Chuyển mô hình `D:\UTT\Đồ án 3\library-microservices-demo` sang kho app Java cho FlintOS. Tái dùng SQLite/Turso wrapper và cách tổ chức Express Gateway + service; dùng JWT, bcrypt và hai vai trò `CUSTOMER`, `ADMIN`.
+Chuyển mô hình `D:\UTT\Đồ án 3\library-microservices-demo` sang kho app Java cho FlintOS. Tái dùng SQLite/Turso wrapper và cách tổ chức Express Gateway + service; dùng JWT, bcrypt và hai vai trò `CUSTOMER`, `ADMIN`. Mọi user là nhà phát hành của các app mình gửi; admin duyệt riêng từng app và từng JAR.
 
 ## Chạy local
 
@@ -22,8 +22,10 @@ Mở **http://127.0.0.1:3300**. Tài khoản local: `customer / 123456`, quản 
 - Miễn phí: tải không cần đăng nhập, không giới hạn lượt tải.
 - Trả phí: đăng nhập → Mua app → `/pay/{id}` → quét QR hoặc mở/copy link → **Thanh toán mô phỏng** → tải JAR. Thiết bị quét mở hóa đơn mà không cần đăng nhập; màn hình của người mua tự cập nhật trạng thái sau thanh toán. Chuyển khoản này không chuyển tiền thật; đơn ghi `payment_source=DEMO`.
 - App đã mua: tải lại và cập nhật mọi phiên bản của app trên cùng tài khoản, không mua lại.
-- Quản lý kho: thêm/sửa thông tin, đặt giá VND (0 = miễn phí), upload release JAR, ẩn/hiện app, xem và xác nhận đơn.
-- Admin đăng nhập từ trang chủ sẽ vào thẳng `#admin`, có nút **Quản trị** ở thanh tài khoản và thống kê ứng dụng/đơn. Tài khoản CUSTOMER không có menu hay quyền quản trị; API vẫn kiểm tra JWT và role. Khi đang mở app cụ thể hoặc link QR, đăng nhập giữ nguyên màn hình đó.
+- Phát hành: mọi user tạo app, đặt giá và upload JAR STABLE/BETA của mình. App và JAR cần admin duyệt riêng; sửa thông tin app sẽ gửi duyệt lại.
+- Beta: đăng ký tại trang app → admin duyệt → tải beta; beta trả phí vẫn cần thanh toán.
+- Quản lý kho: admin duyệt app/JAR/beta, quản lý giá, ẩn/hiện app và xác nhận đơn.
+- Admin đăng nhập từ trang chủ sẽ vào thẳng `#admin`, có nút **Quản trị** ở thanh tài khoản và thống kê ứng dụng/đơn. Tài khoản CUSTOMER không có menu hay quyền quản trị; API vẫn kiểm tra phiên và role hiện tại trong database. Khi đang mở app cụ thể hoặc link QR, đăng nhập giữ nguyên màn hình đó.
 
 Admin mở **QR thanh toán** trong bảng đơn PENDING để khách quét. QR được tạo ngay trong trình duyệt bằng thư viện `qrcode-generator` như nguồn Đồ án 3, kèm giấy phép MIT trong `frontend/vendor/qrcode.LICENSE`. Link dùng token riêng cho từng hóa đơn, đặt trong fragment để không xuất hiện trong URL request/log HTTP. Quyền tải thuộc tài khoản mua app; link hóa đơn chỉ xem thông tin thanh toán và xác nhận mô phỏng cho đúng đơn đó. QR trên bản Render dùng URL HTTPS của website; link localhost chỉ truy cập được trên máy chạy local.
 
@@ -34,13 +36,13 @@ Nút tải tải file về trình duyệt. Cài lên thiết bị bằng cách c
 | Thành phần | Port | Dữ liệu |
 |---|---:|---|
 | Gateway + frontend | 3300 | Proxy API JSON/binary, không public thư mục data |
-| User Service | 3301 | `user-service.db`: users, bcrypt hashes |
-| App Service | 3302 | `app-service.db`: apps, releases, downloads |
+| User Service | 3301 | `user-service.db`: users, bcrypt hashes, sessions, oauth_accounts, oauth_attempts |
+| App Service | 3302 | `app-service.db`: apps, releases, downloads, beta_enrollments |
 | Order Service | 3303 | `order-service.db`: orders, quyền sở hữu từ trạng thái PAID |
 
 `releases.jar_blob` là **BLOB chứa toàn bộ bytes JAR**; database cũng lưu manifest, entry point, dung lượng, SHA-256, phiên bản. Release bất biến, không ghi đè cùng version. Không có đường dẫn file JAR công khai để bỏ qua kiểm tra quyền.
 
-Gateway chỉ chuyển tiếp JWT; services tự xác minh JWT, không tin `x-user-role`/`x-user-id` do client gửi. API nội bộ có secret riêng, không được expose qua gateway. Dịch vụ local bind loopback. Khi Order Service lỗi, App Service từ chối tải app trả phí. Giá được chụp từ App Service lúc tạo đơn; client không quyết định số tiền. Mua trùng/nhấn thanh toán nhiều lần trả cùng đơn; chuyển trạng thái thanh toán là một câu SQL nguyên tử. Hủy chỉ áp dụng đơn PENDING, không cấp quyền tải.
+Gateway chuyển tiếp cookie/Bearer; services xác minh JWT và phiên còn hiệu lực trong User Service, không tin `x-user-role`/`x-user-id` do client gửi. API nội bộ có secret riêng, không được expose qua gateway. Dịch vụ local bind loopback. Khi Order Service lỗi, App Service từ chối tải app trả phí. Giá được chụp từ App Service lúc tạo đơn; client không quyết định số tiền. Mua trùng/nhấn thanh toán nhiều lần trả cùng đơn; chuyển trạng thái thanh toán là một câu SQL nguyên tử. Hủy chỉ áp dụng đơn PENDING, không cấp quyền tải.
 
 JAR tối đa 25MB; kiểm tra ZIP, đường dẫn, tổng kích thước giải nén, manifest, Main-Class/MIDlet-1 cùng class tương ứng và CRC. Không thực thi JAR khi upload. Kiểm tra cấu trúc không chứng minh code bên trong an toàn hoặc chạy được trên mọi firmware.
 
@@ -51,9 +53,10 @@ JAR tối đa 25MB; kiểm tra ZIP, đường dẫn, tổng kích thước giả
 | `POST /api/login`, `/api/register` | Public |
 | `GET /api/users/me` | Đăng nhập |
 | `GET /api/apps`, `/api/apps/:id` | Public với app hiển thị; ADMIN xem cả app ẩn |
-| `POST /api/apps`, `PUT /api/apps/:id` | ADMIN |
-| `POST /api/apps/:id/releases` | ADMIN, bytes `application/java-archive`, header `X-App-Version` |
-| `GET /api/apps/:id/download?releaseId=...` | Miễn phí public; trả phí cần PAID của tài khoản |
+| `POST /api/apps` | Mọi tài khoản đăng nhập; CUSTOMER tạo PENDING |
+| `PUT /api/apps/:id` | Chủ app hoặc ADMIN |
+| `POST /api/apps/:id/releases` | Chủ app hoặc ADMIN, bytes `application/java-archive`, headers `X-App-Version`, `X-Release-Channel` |
+| `GET /api/apps/:id/download?releaseId=...` | App/JAR phải được duyệt; STABLE miễn phí public, trả phí cần PAID, BETA cần đăng ký APPROVED |
 | `GET/POST /api/orders`, `GET /api/orders/:id` | Tài khoản chỉ xem đơn của mình; ADMIN có thể xem tất cả |
 | `POST /api/orders/:id/pay` | Chủ đơn; chỉ PAYMENT_MODE=demo |
 | `GET /api/orders/:id/payment-link` | Chủ đơn hoặc ADMIN, chỉ đơn PENDING |
@@ -71,8 +74,10 @@ Copy `.env.example` thành `.env` nếu cần; Node 22 tải tự động. `DATA
 npm.cmd test
 ```
 
-40 kiểm thử tích hợp dùng thư mục tạm và port 44330–44333, không sửa catalog thật. Kiểm tra RBAC, bytes BLOB, tải miễn phí, chặn trả phí, quyền truy cập link QR, token giả/sai đơn/đơn đã hủy, thanh toán lặp/concurrent giữa QR và chủ đơn, phiên bản, hash, restart, chế độ manual.
+54 kiểm thử tích hợp dùng thư mục tạm và port 44330–44333, không sửa catalog thật. Kiểm tra RBAC, bytes BLOB, tải miễn phí, chặn trả phí, quyền truy cập link QR, token giả/sai đơn/đơn đã hủy, thanh toán lặp/concurrent giữa QR và chủ đơn, phiên bản, hash, restart, chế độ manual. Kiểm thử bổ sung publisher/duyệt từng app và JAR, beta/thu hồi quyền, HttpOnly cookie/CSRF, logout/session/role, brute force, cùng OAuth contract tests mô phỏng.
 
-`PAYMENT_MODE=demo` mặc định cho local. `NODE_ENV=production` bắt buộc `JWT_SECRET`, `INTERNAL_SERVICE_SECRET`, `ADMIN_PASSWORD`. Deploy thử có thể bật `DEPLOYMENT_MODE=demo` để giữ thanh toán mô phỏng; nếu không có flag này, production chỉ cho `PAYMENT_MODE=manual`. Chế độ manual cần admin xác nhận mã giao dịch sau khi nhận tiền; chưa tích hợp ngân hàng/cổng thanh toán. Bản public không tạo tài khoản customer mặc định. Xem [triển khai Render + Turso](docs/deploy-render-turso.md).
+`PAYMENT_MODE=demo` mặc định cho local. `NODE_ENV=production` bắt buộc `JWT_SECRET`, `INTERNAL_SERVICE_SECRET` ít nhất 32 ký tự, `ADMIN_PASSWORD` ít nhất 12 ký tự và public origin HTTPS chính xác. Deploy thử có thể bật `DEPLOYMENT_MODE=demo` để giữ thanh toán mô phỏng; nếu không có flag này, production chỉ cho `PAYMENT_MODE=manual`. Chế độ manual cần admin xác nhận mã giao dịch sau khi nhận tiền; chưa tích hợp ngân hàng/cổng thanh toán. Bản public không tạo tài khoản customer mặc định. Xem [triển khai Render + Turso](docs/deploy-render-turso.md).
 
 Nguồn UTT không bị sửa hoặc mang theo database, credentials, ảnh bìa sách hay lịch sử mượn. Các project Java trong FlintAppStore giữ nguyên.
+
+Xem [phát hành, beta, bảo mật và hướng dẫn cấu hình Google/Facebook/GitHub trên Render](docs/beta-security-oauth.md). OAuth chưa hoạt động thực tế cho đến khi tạo ứng dụng provider và cấu hình credentials.
