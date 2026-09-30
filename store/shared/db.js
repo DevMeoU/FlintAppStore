@@ -4,7 +4,6 @@
 // Test (NODE_ENV=test) luôn dùng file local để độc lập và dọn dẹp được.
 const fs = require('fs');
 const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
 const config = require('./config');
 
 function tursoEndpoint(name) {
@@ -29,6 +28,7 @@ function normalizeRow(row) {
 }
 
 function openLocal(file) {
+  const sqlite3 = require('sqlite3').verbose();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new sqlite3.Database(file);
   db.configure('busyTimeout', 3000);
@@ -57,7 +57,7 @@ function openLocal(file) {
 }
 
 function openRemote(endpoint) {
-  const { createClient } = require('@libsql/client');
+  const { createClient } = require('@libsql/client/web');
   const db = createClient(endpoint);
 
   return {

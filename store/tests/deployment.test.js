@@ -14,4 +14,15 @@ assert.equal(run({...required,TURSO_APP_SERVICE_URL:'file:ephemeral.db'}).status
 const demo=run({...required,DEPLOYMENT_MODE:'demo',PAYMENT_MODE:'demo',RENDER:'true'});
 assert.equal(demo.status,0);assert.deepEqual(JSON.parse(demo.stdout),{paymentMode:'demo',host:'0.0.0.0',demo:true});
 const manual=run({});assert.equal(manual.status,0);assert.equal(JSON.parse(manual.stdout).host,'127.0.0.1');
-console.log('PASS: production/demo gates, required secrets, remote database guard, gateway host');
+const nativeFree=spawnSync(process.execPath,['-e',`
+  const Module=require('node:module');const original=Module._load;
+  Module._load=function(name,...args){
+    if(name==='sqlite3'||name==='libsql'||name==='@libsql/client')throw new Error('Native SQLite unavailable on cloud runtime');
+    return original.call(this,name,...args);
+  };
+  const db=require(process.argv[1]).openDatabase('app-service');
+  if(db.backend!=='turso')throw new Error('Expected Turso');
+  db.close();
+`,path.resolve(__dirname,'../shared/db.js')],{env:{...base,...required},encoding:'utf8'});
+assert.equal(nativeFree.status,0,nativeFree.stderr);
+console.log('PASS: production/demo gates, required secrets, remote database guard, gateway host, Turso without native SQLite');
