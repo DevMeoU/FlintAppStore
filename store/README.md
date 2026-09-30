@@ -23,6 +23,7 @@ Mở **http://127.0.0.1:3300**. Tài khoản local: `customer / 123456`, quản 
 - Trả phí: đăng nhập → Mua app → `/pay/{id}` → quét QR hoặc mở/copy link → **Thanh toán mô phỏng** → tải JAR. Thiết bị quét mở hóa đơn mà không cần đăng nhập; màn hình của người mua tự cập nhật trạng thái sau thanh toán. Chuyển khoản này không chuyển tiền thật; đơn ghi `payment_source=DEMO`.
 - App đã mua: tải lại và cập nhật mọi phiên bản của app trên cùng tài khoản, không mua lại.
 - Quản lý kho: thêm/sửa thông tin, đặt giá VND (0 = miễn phí), upload release JAR, ẩn/hiện app, xem và xác nhận đơn.
+- Admin đăng nhập từ trang chủ sẽ vào thẳng `#admin`, có nút **Quản trị** ở thanh tài khoản và thống kê ứng dụng/đơn. Tài khoản CUSTOMER không có menu hay quyền quản trị; API vẫn kiểm tra JWT và role. Khi đang mở app cụ thể hoặc link QR, đăng nhập giữ nguyên màn hình đó.
 
 Admin mở **QR thanh toán** trong bảng đơn PENDING để khách quét. QR được tạo ngay trong trình duyệt bằng thư viện `qrcode-generator` như nguồn Đồ án 3, kèm giấy phép MIT trong `frontend/vendor/qrcode.LICENSE`. Link dùng token riêng cho từng hóa đơn, đặt trong fragment để không xuất hiện trong URL request/log HTTP. Quyền tải thuộc tài khoản mua app; link hóa đơn chỉ xem thông tin thanh toán và xác nhận mô phỏng cho đúng đơn đó. QR trên bản Render dùng URL HTTPS của website; link localhost chỉ truy cập được trên máy chạy local.
 

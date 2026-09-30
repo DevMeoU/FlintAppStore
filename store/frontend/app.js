@@ -27,10 +27,16 @@ async function api(path, options = {}) {
 }
 function account() {
   document.querySelector('.demo-hint').hidden = config.demoAccounts === false;
-  document.querySelector('#account').innerHTML = user ? `<span class="avatar">${esc(user.fullName.charAt(0))}</span><span class="account-name">${esc(user.fullName)}</span><button class="quiet" data-action="logout">Đăng xuất</button>` : '<button class="primary" data-action="login">Đăng nhập</button>';
+  document.querySelector('#account').innerHTML = user ? `<span class="avatar" title="${esc(user.username)} · ${user.role === 'ADMIN' ? 'Quản trị viên' : 'Khách hàng'}">${esc(user.fullName.charAt(0))}</span><span class="account-name">${esc(user.fullName)}</span>${user.role === 'ADMIN' ? '<a class="button admin-shortcut" href="#admin">Quản trị</a>' : '<span class="account-role">Khách hàng</span>'}<button class="quiet" data-action="logout">Đăng xuất</button>` : '<button class="primary" data-action="login">Đăng nhập</button>';
   document.querySelector('#admin-nav').hidden = user?.role !== 'ADMIN';
 }
 function openAuth() { document.querySelector('#auth-error').textContent = ''; dialog.showModal(); }
+function enterAdmin() {
+  if (user?.role === 'ADMIN' && location.pathname === '/' && ['', '#catalog', '#apps'].includes(location.hash)) {
+    navigate('admin'); return true;
+  }
+  return false;
+}
 function navigate(route) { if (location.pathname !== '/') history.replaceState(null, '', '/' + location.hash); location.hash = route; }
 function card(app) {
   const isOwned = owned(app.id);
@@ -132,6 +138,13 @@ async function admin(activeRender) {
   if (user?.role !== 'ADMIN') { main.innerHTML = '<div class="empty">Đăng nhập bằng tài khoản quản trị để quản lý kho.</div>'; return; }
   const allOrders = await api('/orders?all=1'); if (activeRender !== renderId) return;
   main.innerHTML = `<span class="eyebrow">STORE MANAGEMENT</span><h1>Quản lý kho ứng dụng</h1><p class="muted">Phát hành JAR, chỉnh giá và theo dõi thanh toán.</p><div class="two-cols"><div class="panel" id="admin-form">${adminForm()}</div><section class="panel"><h2>Phát hành phiên bản JAR</h2><form id="release-form"><label>Ứng dụng<select name="appId" required>${apps.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label><label>Phiên bản<input name="version" placeholder="1.0.0" required pattern="[a-zA-Z0-9._-]{1,40}"></label><label>File JAR (tối đa 25MB)<input name="jar" type="file" accept=".jar" required></label><p class="muted">File được kiểm tra manifest, entry point và CRC trước khi lưu vào database. Phiên bản đã phát hành không bị ghi đè.</p><button class="primary" type="submit" ${!apps.length ? 'disabled' : ''}>Upload & phát hành</button></form></section></div><section class="panel"><h2>Danh sách ứng dụng</h2>${apps.map(a => `<div class="admin-app"><div><strong>${esc(a.name)}</strong> <span class="muted">${a.published ? 'Đang hiển thị' : 'Đã ẩn'}</span><p class="muted">${a.price_vnd ? money(a.price_vnd) : 'Miễn phí'} · ${esc(a.latest_version || 'Chưa có JAR')}</p></div><div class="action-row"><button data-action="edit" data-id="${a.id}">Sửa thông tin / giá</button><button data-action="publish" data-id="${a.id}">${a.published ? 'Ẩn app' : 'Hiển thị'}</button></div></div>`).join('')}</section><section class="panel"><h2>Tất cả đơn thanh toán</h2>${allOrders.length ? orderTable(allOrders, true) : '<p class="muted">Chưa có đơn.</p>'}</section>`;
+  const stats = [
+    ['Ứng dụng trong kho', apps.length],
+    ['Đang hiển thị', apps.filter(a => a.published).length],
+    ['Đơn chờ thanh toán', allOrders.filter(o => o.status === 'PENDING').length],
+    ['Đơn đã thanh toán', allOrders.filter(o => o.status === 'PAID').length]
+  ];
+  main.querySelector(':scope > p').insertAdjacentHTML('afterend', `<p class="notice admin-notice"><strong>Bạn đang đăng nhập với quyền Quản trị viên.</strong> Bạn có thể thêm/sửa ứng dụng, đổi giá, upload phiên bản JAR, ẩn/hiện app và xác nhận đơn của mọi người mua.</p><div class="admin-stats">${stats.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('')}</div>`);
 }
 async function render() {
   paymentPoll?.abort(); paymentPoll = null;
@@ -200,7 +213,7 @@ document.addEventListener('submit', async event => {
     const values = Object.fromEntries(new FormData(form));
     if (form.id === 'auth-form') {
       const result = await api('/' + authMode, { method: 'POST', body: values }); token = result.token; user = result.user;
-      sessionStorage.setItem('flint-token', token); dialog.close(); account(); await render();
+      sessionStorage.setItem('flint-token', token); dialog.close(); account(); if (!enterAdmin()) await render();
     } else if (form.id === 'app-form') {
       values.priceVnd = Number(values.priceVnd); values.published = !!values.published;
       await api('/apps' + (form.dataset.id ? '/' + form.dataset.id : ''), { method: form.dataset.id ? 'PUT' : 'POST', body: values }); toast('Đã lưu app.'); await render();
@@ -233,6 +246,6 @@ document.querySelector('#auth-toggle').onclick = () => {
 };
 window.addEventListener('hashchange', () => { if (location.pathname !== '/') history.replaceState(null, '', '/' + location.hash); render(); });
 (async () => {
-  try { config = await api('/config'); document.querySelector('#figma-link').href = config.designUrl; if (config.paymentMode !== 'demo') document.querySelector('footer span').textContent = 'Thanh toán chuyển khoản · Admin xác nhận'; if (token) { try { user = await api('/users/me'); } catch { token = ''; sessionStorage.removeItem('flint-token'); } } account(); await render(); }
+  try { config = await api('/config'); document.querySelector('#figma-link').href = config.designUrl; if (config.paymentMode !== 'demo') document.querySelector('footer span').textContent = 'Thanh toán chuyển khoản · Admin xác nhận'; if (token) { try { user = await api('/users/me'); } catch { token = ''; sessionStorage.removeItem('flint-token'); } } account(); if (!enterAdmin()) await render(); }
   catch (error) { main.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 })();
