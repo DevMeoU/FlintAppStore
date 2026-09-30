@@ -8,6 +8,14 @@ App của user bắt đầu ở trạng thái PENDING, chưa hiển thị công 
 
 Sửa thông tin hoặc giá bằng tài khoản nhà phát hành đưa app về PENDING và ẩn khỏi kho để admin duyệt lại. Upload JAR mới tạo một phiên bản PENDING bất biến, không ghi đè hoặc thay bytes của bản đã duyệt. Admin có thể từ chối app/JAR và ghi lý do. Một app được duyệt không cấp quyền tự duyệt app khác.
 
+## Khóa app (Unavailable)
+
+Trong **Quản lý → App và hàng chờ duyệt**, admin bấm **Khóa app · Unavailable** hoặc **Mở khóa app**. API `PATCH /api/apps/:id/availability` nhận `availability: "UNAVAILABLE"` hoặc `"AVAILABLE"`, chỉ chấp nhận phiên ADMIN và lưu người cập nhật/thời điểm vào database.
+
+App bị khóa vẫn hiển thị với nhãn Unavailable, nhưng mọi đường tải JAR bị từ chối với HTTP 403 và mã `APP_UNAVAILABLE`: app miễn phí, app đã mua, các phiên bản cũ/ổn định/beta, cả đường tải kiểm tra của chủ app và admin. Không tạo đơn mua mới hoặc đăng ký beta mới khi khóa. Đơn cũ và quyền beta được giữ lại; mở khóa không tự cấp quyền tải app trả phí hoặc beta cho tài khoản chưa đủ quyền.
+
+Khóa tách biệt với hiển thị và xét duyệt: sửa thông tin, upload/duyệt JAR, duyệt lại app hoặc đổi hiển thị không mở khóa. Migration bổ sung giữ nguyên ID, giá, JAR BLOB và trạng thái hiện có; app cũ mặc định AVAILABLE. Khóa ngăn các yêu cầu tải tiếp theo, không thu hồi được file đã tải xuống trước đó.
+
 ## Beta
 
 Chọn kênh **Beta** khi upload. Sau khi app và JAR beta được duyệt, trang chi tiết hiện **Đăng ký beta**. Admin duyệt từng yêu cầu trong **Quản lý → Duyệt đăng ký beta**, có thể từ chối hoặc thu hồi quyền. Người dùng tải beta sau khi yêu cầu được APPROVED; tải app beta trả phí vẫn cần đơn PAID của chính tài khoản đó. Quyền beta áp dụng cho một user và một app, gồm các bản beta được admin duyệt của app này.

@@ -24,6 +24,8 @@ async function createAppDatabase() {
     for (const [name, definition] of Object.entries(columns)) if (!present.has(name)) await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }
   await addColumns('apps', {
+    availability: "TEXT NOT NULL DEFAULT 'AVAILABLE' CHECK(availability IN ('AVAILABLE','UNAVAILABLE'))",
+    availability_updated_by: 'INTEGER', availability_updated_at: 'TEXT',
     owner_user_id: 'INTEGER', review_status: "TEXT NOT NULL DEFAULT 'APPROVED' CHECK(review_status IN ('PENDING','APPROVED','REJECTED'))",
     review_note: "TEXT NOT NULL DEFAULT ''", reviewed_by: 'INTEGER', reviewed_at: 'TEXT'
   });

@@ -156,6 +156,47 @@ async function run() {
     assert.equal((await request('/apps/' + free, admin)).status, 200);
     assert.ok(!(await request('/apps')).body.some(a => a.id === free));
   });
+  await check('only admin may lock apps and invalid availability values are rejected',async()=>{
+    for(const token of [customer,other])assert.equal((await request(`/apps/${paid}/availability`,token,{availability:'UNAVAILABLE'},'PATCH')).status,403);
+    assert.equal((await request(`/apps/${paid}/availability`,null,{availability:'UNAVAILABLE'},'PATCH',{'x-user-id':'1','x-user-role':'ADMIN'})).status,401);
+    for(const availability of [null,true,'available','OTHER'])assert.equal((await request(`/apps/${paid}/availability`,admin,{availability},'PATCH')).status,400);
+    assert.equal((await request('/apps/999999/availability',admin,{availability:'UNAVAILABLE'},'PATCH')).status,404);
+    assert.equal((await request('/apps',customer,{name:'Forged lock',slug:'forged-lock',availability:'AVAILABLE'})).status,403);
+    assert.equal((await request('/apps/'+paid,admin,{availability:'AVAILABLE'},'PUT')).status,403);
+  });
+  await check('free app lock blocks all accounts and review download; unlocking preserves exact JAR',async()=>{
+    await request('/apps/'+free,admin,{published:true},'PUT');
+    const before=(await request('/apps/'+free)).body;
+    const locked=await request(`/apps/${free}/availability`,admin,{availability:'UNAVAILABLE'},'PATCH');
+    assert.equal(locked.status,200);assert.equal(locked.body.availability_updated_by,1);assert.ok(locked.body.availability_updated_at);
+    assert.equal((await request('/apps/'+free)).body.availability,'UNAVAILABLE');
+    assert.ok((await request('/apps')).body.some(a=>a.id===free && a.availability==='UNAVAILABLE'));
+    for(const token of [null,customer,other,admin]){
+      const headers=token?{Authorization:'Bearer '+token}:{};
+      for(const path of [`/api/apps/${free}/download`,`/api/apps/${free}/download?releaseId=${before.latest_release_id}`]){
+        const response=await fetch(base+path,{headers});assert.equal(response.status,403);assert.equal((await response.json()).code,'APP_UNAVAILABLE');assert.equal(response.headers.get('x-jar-sha256'),null);
+      }
+    }
+    assert.equal((await request(`/apps/${free}/releases/${before.latest_release_id}/review-download`,admin)).status,403);
+    assert.equal((await request('/apps/'+free)).body.download_count,before.download_count);
+    await request(`/apps/${free}/availability`,admin,{availability:'AVAILABLE'},'PATCH');
+    const downloaded=await fetch(base+`/api/apps/${free}/download`);assert.equal(downloaded.status,200);
+    assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),fs.readFileSync(path.join(root,'tests/fixtures/reference-ui.jar')));
+    await request('/apps/'+free,admin,{published:false},'PUT');
+  });
+  await check('paid app lock blocks existing purchases and every version without deleting entitlements',async()=>{
+    const before=(await request('/apps/'+paid)).body;
+    await request(`/apps/${paid}/availability`,admin,{availability:'UNAVAILABLE'},'PATCH');
+    for(const token of [null,customer,other,admin])for(const query of ['',`?releaseId=${release1}`,`?releaseId=${before.latest_release_id}`]){
+      const response=await fetch(base+`/api/apps/${paid}/download${query}`,{headers:token?{Authorization:'Bearer '+token}:{}});assert.equal(response.status,403);assert.equal((await response.json()).code,'APP_UNAVAILABLE');
+    }
+    assert.equal((await request('/orders',other,{appId:paid})).status,403);
+    assert.equal((await request('/orders',customer)).body.find(o=>o.id===order.id).status,'PAID');
+    assert.equal((await request('/apps/'+paid)).body.download_count,before.download_count);
+    await request(`/apps/${paid}/availability`,admin,{availability:'AVAILABLE'},'PATCH');
+    const original=await fetch(base+`/api/apps/${paid}/download?releaseId=${release1}`,{headers:{Authorization:'Bearer '+customer}});assert.equal(original.status,200);assert.deepEqual(Buffer.from(await original.arrayBuffer()),jar1);
+    assert.equal((await fetch(base+`/api/apps/${paid}/download`,{headers:{Authorization:'Bearer '+other}})).status,402);
+  });
   await check('direct service does not trust forged user headers', async () => {
     const r = await fetch(`http://127.0.0.1:${basePort + 2}/apps`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': '1', 'x-user-role': 'ADMIN' }, body: JSON.stringify({ name: 'Forged', slug: 'forged' }) }); assert.equal(r.status, 401);
     const rights = await fetch(`http://127.0.0.1:${basePort + 3}/internal/entitlements?userId=1&appId=${paid}`); assert.equal(rights.status, 403);
@@ -235,6 +276,32 @@ async function run() {
     const next=await upload(submitted,customer,jar1,'3.0.0');assert.equal(next.body.review_status,'PENDING');
     assert.equal((await request('/apps/'+submitted,admin,{published:true},'PUT')).status,409);
   });
+  await check('lock survives publisher edits, app approval, release approval and visibility changes',async()=>{
+    await request(`/apps/${submitted}/review`,admin,{status:'APPROVED'},'PATCH');
+    await request('/beta-enrollments/'+betaEnrollment,admin,{status:'APPROVED'},'PATCH');
+    await request(`/apps/${submitted}/availability`,admin,{availability:'UNAVAILABLE'},'PATCH');
+    assert.equal((await request('/apps/'+submitted,customer,{availability:'AVAILABLE'},'PUT')).status,403);
+    assert.equal((await request(`/apps/${submitted}/availability`,customer,{availability:'AVAILABLE'},'PATCH')).status,403);
+    await request('/apps/'+submitted,customer,{description:'Locked publisher edit'},'PUT');
+    await request(`/apps/${submitted}/review`,admin,{status:'APPROVED'},'PATCH');
+    await request(`/apps/${submitted}/releases/${submittedBeta}/review`,admin,{status:'APPROVED'},'PATCH');
+    await request('/apps/'+submitted,admin,{published:false},'PUT');await request('/apps/'+submitted,admin,{published:true},'PUT');
+    assert.equal((await request('/apps/'+submitted)).body.availability,'UNAVAILABLE');
+    for(const token of [customer,other,admin])for(const release of [submittedStable,submittedBeta]){
+      assert.equal((await request(`/apps/${submitted}/releases/${release}/review-download`,token)).status,token===other?404:403);
+      const r=await fetch(base+`/api/apps/${submitted}/download?releaseId=${release}`,{headers:{Authorization:'Bearer '+token}});assert.equal(r.status,403);assert.equal((await r.json()).code,'APP_UNAVAILABLE');
+    }
+    assert.equal((await request(`/apps/${submitted}/beta-enrollment`,other,{})).status,403);
+    await request(`/apps/${submitted}/availability`,admin,{availability:'AVAILABLE'},'PATCH');
+    const r=await fetch(base+`/api/apps/${submitted}/download?releaseId=${submittedBeta}`,{headers:{Authorization:'Bearer '+other}});assert.equal(r.status,200);assert.deepEqual(Buffer.from(await r.arrayBuffer()),jar2);
+  });
+  await check('beta-only lock blocks approved members and remains recorded for restart',async()=>{
+    await request(`/apps/${betaOnly}/availability`,admin,{availability:'UNAVAILABLE'},'PATCH');
+    for(const token of [null,customer,admin]){
+      const r=await fetch(base+`/api/apps/${betaOnly}/download?releaseId=${betaOnlyRelease}`,{headers:token?{Authorization:'Bearer '+token}:{}});assert.equal(r.status,403);assert.equal((await r.json()).code,'APP_UNAVAILABLE');
+    }
+    assert.equal((await request(`/apps/${betaOnly}/beta-enrollment`,other,{})).status,403);
+  });
   await check('cookie sessions are HttpOnly, JWT is absent from JSON, and CSRF cross-site requests are blocked',async()=>{
     const login=await request('/login',null,{username:'customer',password:'123456'});assert.equal(login.status,200);assert.ok(!('token' in login.body));
     const cookie=login.headers.get('set-cookie');assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Lax/);
@@ -264,6 +331,8 @@ async function run() {
   });
   await check('database survives restart and manual mode disables demo pay', async () => {
     await stop(); await start('manual');
+    assert.equal((await request('/apps/'+betaOnly)).body.availability,'UNAVAILABLE');
+    assert.equal((await fetch(base+`/api/apps/${betaOnly}/download?releaseId=${betaOnlyRelease}`,{headers:{Authorization:'Bearer '+customer}})).status,403);
     assert.equal((await request('/config')).body.paymentMode, 'manual');
     assert.equal((await request(`/orders/${order.id}/pay`, customer, {})).status, 403);
     assert.equal((await request(`/pay/${order.id}`,null,undefined,'GET',{'X-Payment-Token':payCapability})).body.status,'PAID');

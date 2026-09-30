@@ -19,8 +19,11 @@ async function run() {
     const app = await db.get('SELECT * FROM apps WHERE id=17');
     const release = await db.get('SELECT * FROM releases WHERE id=31');
     assert.equal(app.price_vnd,25000); assert.equal(app.published,0); assert.equal(app.owner_user_id,null); assert.equal(app.review_status,'APPROVED');
+    assert.equal(app.availability,'AVAILABLE'); assert.equal(app.availability_updated_by,null);
     assert.equal(release.channel,'STABLE'); assert.equal(release.review_status,'APPROVED'); assert.equal(release.sha256,digest); assert.deepEqual(Buffer.from(release.jar_blob),bytes);
+    await db.run("UPDATE apps SET availability='UNAVAILABLE',availability_updated_by=1 WHERE id=17");
     await db.close(); db = await createAppDatabase();
+    assert.equal((await db.get('SELECT availability FROM apps WHERE id=17')).availability,'UNAVAILABLE');
     assert.equal((await db.get('SELECT COUNT(*) AS n FROM releases')).n,1);
     assert.equal((await db.all('PRAGMA table_info(beta_enrollments)')).length,8);
     console.log('PASS: additive and repeatable migration preserves legacy IDs, price, visibility and real JAR bytes');

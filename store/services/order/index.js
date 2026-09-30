@@ -34,6 +34,7 @@ async function start() {
     try { item = await service(config.appServicePort, `/internal/apps/${appId}`); }
     catch { return res.status(503).json({ error: 'Chưa đọc được giá app' }); }
     if (!item?.published || item.review_status !== 'APPROVED' || (!item.latest_release_id && !item.latest_beta_release_id)) return res.status(404).json({ error: 'App chưa phát hành JAR' });
+    if (item.availability === 'UNAVAILABLE') return res.status(403).json({error:'App đang bị admin khóa (Unavailable). Chưa thể mua app.',code:'APP_UNAVAILABLE'});
     if (!item.price_vnd) return res.status(400).json({ error: 'App miễn phí có thể tải trực tiếp' });
     const existing = await db.get("SELECT * FROM orders WHERE user_id=? AND app_id=? AND status IN ('PENDING','PAID')", [user.id, appId]);
     if (existing) return res.json(existing);

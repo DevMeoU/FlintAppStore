@@ -8,6 +8,13 @@ function decision(body,res) {
   return { status:body.status,note:(body.note || '').trim() };
 }
 function installModeration(app,db,fields) {
+  app.patch('/apps/:id/availability',route(async(req,res) => {
+    const user = requireUser(req,res,['ADMIN']); if (!user) return;
+    if (!['AVAILABLE','UNAVAILABLE'].includes(req.body.availability)) return res.status(400).json({error:'Chọn AVAILABLE hoặc UNAVAILABLE'});
+    const result = await db.run('UPDATE apps SET availability=?,availability_updated_by=?,availability_updated_at=CURRENT_TIMESTAMP WHERE id=?',[req.body.availability,user.id,req.params.id]);
+    if (!result.changes) return res.status(404).json({error:'Không tìm thấy app'});
+    res.json(await db.get('SELECT * FROM apps WHERE id=?',[req.params.id]));
+  }));
   app.get('/publisher/apps',route(async(req,res) => {
     const user = requireUser(req,res); if (!user) return;
     res.json(await db.all(`SELECT ${fields} FROM apps a WHERE owner_user_id=? ORDER BY id DESC`, [user.id]));
@@ -33,6 +40,7 @@ function installModeration(app,db,fields) {
     const user = requireUser(req,res); if (!user) return;
     const owner = await db.get('SELECT * FROM apps WHERE id=?',[req.params.id]);
     if (!owner || !canManage(user,owner)) return res.status(404).json({error:'Không tìm thấy app của bạn'});
+    if (owner.availability === 'UNAVAILABLE') return res.status(403).json({error:'App đang bị admin khóa (Unavailable). Không thể tải JAR.',code:'APP_UNAVAILABLE'});
     const row = await db.get('SELECT * FROM releases WHERE app_id=? AND id=?',[owner.id,req.params.releaseId]);
     if (!row) return res.status(404).json({error:'Không tìm thấy phiên bản của app'});
     res.set({'Content-Type':'application/java-archive','Content-Disposition':`attachment; filename="${row.filename}"`,'X-JAR-SHA256':row.sha256,'Cache-Control':'private, no-store'}).send(Buffer.from(row.jar_blob));
@@ -45,8 +53,9 @@ function installModeration(app,db,fields) {
   }));
   app.post('/apps/:id/beta-enrollment',route(async(req,res) => {
     const user = requireUser(req,res); if (!user) return;
-    const row = await db.get("SELECT id FROM apps WHERE id=? AND published=1 AND review_status='APPROVED'",[req.params.id]);
+    const row = await db.get("SELECT id,availability FROM apps WHERE id=? AND published=1 AND review_status='APPROVED'",[req.params.id]);
     if (!row || !await db.get("SELECT id FROM releases WHERE app_id=? AND channel='BETA' AND review_status='APPROVED' LIMIT 1",[row.id])) return res.status(404).json({error:'App chưa phát hành bản beta được duyệt'});
+    if (row.availability === 'UNAVAILABLE') return res.status(403).json({error:'App đang bị admin khóa (Unavailable). Chưa thể đăng ký beta.',code:'APP_UNAVAILABLE'});
     await db.run('INSERT OR IGNORE INTO beta_enrollments(app_id,user_id) VALUES(?,?)',[row.id,user.id]);
     res.json(await db.get('SELECT * FROM beta_enrollments WHERE app_id=? AND user_id=?',[row.id,user.id]));
   }));

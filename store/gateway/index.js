@@ -31,7 +31,7 @@ app.use('/api', async (req, res) => {
   else if (/^\/api\/auth\/(login|register)$/.test(p)) { port = config.userServicePort; url = url.replace('/auth', ''); }
   else if (/^\/api\/users\/me$/.test(p)) port = config.userServicePort;
   else if (/^\/api\/auth\/(?:providers|oauth\/(?:google|github|facebook)\/(?:start|callback))$/.test(p)) port = config.userServicePort;
-  else if (/^\/api\/apps(?:\/\d+(?:\/(?:download|beta-enrollment|review|releases(?:\/\d+\/(?:review|review-download))?))?)?$/.test(p)) port = config.appServicePort;
+  else if (/^\/api\/apps(?:\/\d+(?:\/(?:download|beta-enrollment|review|availability|releases(?:\/\d+\/(?:review|review-download))?))?)?$/.test(p)) port = config.appServicePort;
   else if (/^\/api\/(?:publisher\/apps|beta-enrollments(?:\/(?:mine|\d+))?)$/.test(p)) port = config.appServicePort;
   else if (/^\/api\/orders(?:\/\d+(?:\/(?:pay|confirm|cancel|payment-link))?)?$/.test(p)) port = config.orderServicePort;
   else if (/^\/api\/pay\/\d+(?:\/confirm)?$/.test(p)) port = config.orderServicePort;

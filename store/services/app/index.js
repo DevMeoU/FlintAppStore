@@ -36,6 +36,7 @@ async function start() {
   }
   app.post('/apps', route(async (req, res) => {
     const user = requireUser(req,res); if (!user) return;
+    if (Object.hasOwn(req.body,'availability')) return res.status(403).json({error:'Chỉ admin được đổi trạng thái qua thao tác Khóa/Mở khóa app'});
     try {
       const values = metadata(req.body, req.body.slug);
       if (user.role !== 'ADMIN') values[5] = 0;
@@ -51,6 +52,7 @@ async function start() {
     const old = await db.get('SELECT * FROM apps WHERE id=?', [req.params.id]);
     if (!old) return res.status(404).json({ error: 'Không tìm thấy app' });
     if (!canManage(user,old)) return res.status(403).json({ error:'Bạn chỉ được quản lý app mình gửi' });
+    if (Object.hasOwn(req.body,'availability')) return res.status(403).json({error:'Chỉ admin được đổi trạng thái qua thao tác Khóa/Mở khóa app'});
     if (user.role !== 'ADMIN' && Object.hasOwn(req.body,'published')) return res.status(403).json({ error:'Admin duyệt và quyết định hiển thị app' });
     if (req.body.published === true && old.review_status !== 'APPROVED') return res.status(409).json({ error:'Duyệt app trước khi hiển thị' });
     try {
@@ -80,6 +82,7 @@ async function start() {
   app.get('/apps/:id/download', route(async (req, res) => {
     const row = await db.get("SELECT * FROM apps WHERE id=? AND published=1 AND review_status='APPROVED'", [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Không tìm thấy app' });
+    if (row.availability === 'UNAVAILABLE') return res.status(403).json({error:'App đang bị admin khóa (Unavailable). Không thể tải JAR.',code:'APP_UNAVAILABLE'});
     const user = identity(req);
     const release = req.query.releaseId
       ? await db.get("SELECT * FROM releases WHERE app_id=? AND id=? AND review_status='APPROVED'", [row.id, req.query.releaseId])
@@ -97,6 +100,8 @@ async function start() {
       catch { return res.status(503).json({ error: 'Chưa kiểm tra được quyền tải; hãy thử lại' }); }
       if (!rights.owned) return res.status(402).json({ error: 'Thanh toán trước khi tải app', appId: row.id });
     }
+    // Recheck after entitlement lookup so a lock applied during that call takes effect.
+    if ((await db.get('SELECT availability FROM apps WHERE id=?',[row.id])).availability === 'UNAVAILABLE') return res.status(403).json({error:'App đang bị admin khóa (Unavailable). Không thể tải JAR.',code:'APP_UNAVAILABLE'});
     const bytes = Buffer.from(release.jar_blob);
     await db.run('INSERT INTO downloads(app_id,release_id,user_id) VALUES(?,?,?)', [row.id, release.id, user?.id || null]);
     res.set({ 'Content-Type': 'application/java-archive', 'Content-Disposition': `attachment; filename="${release.filename}"`, 'Content-Length': bytes.length, 'X-JAR-SHA256': release.sha256, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }).send(bytes);
