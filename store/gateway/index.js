@@ -25,10 +25,11 @@ app.use('/api', async (req, res) => {
   else if (/^\/api\/auth\/(login|register)$/.test(p)) { port = config.userServicePort; url = url.replace('/auth', ''); }
   else if (/^\/api\/users\/me$/.test(p)) port = config.userServicePort;
   else if (/^\/api\/apps(?:\/\d+(?:\/(?:releases|download))?)?$/.test(p)) port = config.appServicePort;
-  else if (/^\/api\/orders(?:\/\d+(?:\/(?:pay|confirm|cancel))?)?$/.test(p)) port = config.orderServicePort;
+  else if (/^\/api\/orders(?:\/\d+(?:\/(?:pay|confirm|cancel|payment-link))?)?$/.test(p)) port = config.orderServicePort;
+  else if (/^\/api\/pay\/\d+(?:\/confirm)?$/.test(p)) port = config.orderServicePort;
   else return res.status(404).json({ error: 'API không tồn tại' });
   const headers = { 'Content-Type': req.get('content-type') || 'application/json' };
-  for (const key of ['authorization', 'x-app-version']) if (req.get(key)) headers[key] = req.get(key);
+  for (const key of ['authorization', 'x-app-version', 'x-payment-token']) if (req.get(key)) headers[key] = req.get(key);
   // Never forward browser-supplied internal secrets or identity headers.
   try {
     const response = await fetch(`http://127.0.0.1:${port}${url}`, {

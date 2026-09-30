@@ -46,7 +46,7 @@ function jar(version) {
 }
 async function run() {
   await start();
-  let admin, customer, other, free, paid, order, release1;
+  let admin, customer, other, free, paid, order, release1, payCapability, cancelledCapability, pendingCapability;
   const jar1 = jar(1), jar2 = jar(2);
   await check('web and 3 services ready', async () => { assert.equal((await fetch(base + '/')).status, 200); assert.equal((await request('/health')).body.services, 3); });
   await check('admin and customer log in', async () => {
@@ -88,13 +88,43 @@ async function run() {
   await check('public metadata excludes BLOB and manifest', async () => { const r = await request('/apps/' + paid); assert.equal(r.status, 200); assert.ok(!JSON.stringify(r.body).includes('jar_blob')); assert.ok(!JSON.stringify(r.body).includes('Manifest-Version')); });
   await check('order price comes from database', async () => { const r = await request('/orders', customer, { appId: paid, amountVnd: 1, status: 'PAID' }); assert.equal(r.status, 201); assert.equal(r.body.amount_vnd, 25000); assert.equal(r.body.status, 'PENDING'); order = r.body; });
   await check('concurrent order clicks reuse same pending order', async () => { const rs = await Promise.all(Array.from({ length: 5 }, () => request('/orders', customer, { appId: paid }))); rs.forEach(r => assert.equal(r.body.id, order.id)); });
+  await check('only buyer/admin can obtain a QR payment link', async () => {
+    assert.equal((await request(`/orders/${order.id}/payment-link`)).status,401);
+    assert.equal((await request(`/orders/${order.id}/payment-link`,other)).status,404);
+    const linked=await request(`/orders/${order.id}/payment-link`,customer);assert.equal(linked.status,200);
+    assert.match(linked.body.path,new RegExp(`^/pay/${order.id}#t=[a-f0-9]{64}$`));
+    payCapability=linked.body.path.split('#t=')[1];
+    assert.equal((await request(`/orders/${order.id}/payment-link`,admin)).body.path,linked.body.path);
+  });
+  await check('public QR invoice requires the correct order capability and exposes no account data', async () => {
+    for(const cap of ['', '0'.repeat(64),customer])assert.equal((await request(`/pay/${order.id}`,null,undefined,'GET',{'X-Payment-Token':cap})).status,404);
+    assert.equal((await request(`/pay/${order.id+1}`,null,undefined,'GET',{'X-Payment-Token':payCapability})).status,404);
+    const invoice=await request(`/pay/${order.id}`,null,undefined,'GET',{'X-Payment-Token':payCapability});
+    assert.equal(invoice.status,200);assert.equal(invoice.body.amount_vnd,25000);assert.equal(invoice.body.status,'PENDING');
+    assert.deepEqual(Object.keys(invoice.body).sort(),['id','app_name','amount_vnd','currency','status','payment_code','payment_source','paid_at'].sort());
+  });
+  await check('public confirm rejects missing/forged token and QR token cannot sign in or download', async () => {
+    for(const cap of ['', '0'.repeat(64)])assert.equal((await request(`/pay/${order.id}/confirm`,null,{t:cap})).status,404);
+    assert.equal((await request('/users/me',payCapability)).status,401);
+    assert.equal((await fetch(base+`/api/apps/${paid}/download`,{headers:{'X-Payment-Token':payCapability}})).status,401);
+    assert.equal((await request(`/orders/${order.id}`,payCapability)).status,401);
+  });
   await check('other user cannot inspect, pay or cancel order', async () => { for (const suffix of ['', '/pay', '/cancel']) { const r = await request('/orders/' + order.id + suffix, other, suffix ? {} : undefined); assert.equal(r.status, 404); } });
   await check('customer cannot manually confirm payment', async () => assert.equal((await request(`/orders/${order.id}/confirm`, customer, { reference: 'fake' })).status, 403));
   await check('payment link renders without leaking order', async () => { const r = await fetch(base + '/pay/' + order.id); assert.equal(r.status, 200); assert.ok(!(await r.text()).includes(order.payment_code)); });
+  await check('QR library is served locally and invoice responses are not cached', async () => {
+    const script=await fetch(base+'/assets/vendor/qrcode.min.js');assert.equal(script.status,200);
+    const r=await fetch(base+`/api/pay/${order.id}`,{headers:{'X-Payment-Token':payCapability}});assert.equal(r.headers.get('cache-control'),'private, no-store');
+    const qr=require('../frontend/vendor/qrcode.min.js')(0,'M');qr.addData(`https://flint-app-store-demo.onrender.com/pay/${order.id}#t=${payCapability}`);qr.make();assert.ok(qr.getModuleCount()>20);
+  });
   await check('parallel simulated payments grant one durable right', async () => {
-    const rs = await Promise.all(Array.from({ length: 5 }, () => request(`/orders/${order.id}/pay`, customer, {})));
+    const rs = await Promise.all(Array.from({ length: 5 }, (_,i) => i%2 ? request(`/orders/${order.id}/pay`, customer, {}) : request(`/pay/${order.id}/confirm`,null,{t:payCapability,amountVnd:1,status:'CANCELLED'})));
     rs.forEach(r => { assert.equal(r.status, 200); assert.equal(r.body.status, 'PAID'); assert.equal(r.body.payment_source, 'DEMO'); });
     assert.equal((await request('/orders', customer)).body.length, 1);
+  });
+  await check('scanned invoice shows paid receipt; paid orders cannot issue another link', async () => {
+    const r=await request(`/pay/${order.id}`,null,undefined,'GET',{'X-Payment-Token':payCapability});assert.equal(r.body.status,'PAID');assert.equal(r.body.amount_vnd,25000);
+    assert.equal((await request(`/orders/${order.id}/payment-link`,customer)).status,409);
   });
   await check('paid download is exact original bytes and hash', async () => {
     const r = await fetch(base + `/api/apps/${paid}/download`, { headers: { Authorization: 'Bearer ' + customer } }); assert.equal(r.status, 200); assert.deepEqual(Buffer.from(await r.arrayBuffer()), jar1); assert.equal(r.headers.get('x-jar-sha256'), crypto.createHash('sha256').update(jar1).digest('hex')); assert.equal(r.headers.get('cache-control'), 'private, no-store');
@@ -110,9 +140,13 @@ async function run() {
   await check('paid order cannot be cancelled or repurchased', async () => { assert.equal((await request(`/orders/${order.id}/cancel`, customer, {})).status, 409); assert.equal((await request('/orders', customer, { appId: paid })).body.id, order.id); });
   await check('pending cancel opens no right; repurchase creates new order', async () => {
     const first = (await request('/orders', other, { appId: paid })).body;
+    cancelledCapability=(await request(`/orders/${first.id}/payment-link`,other)).body.path.split('#t=')[1];
     assert.equal((await request(`/orders/${first.id}/cancel`, other, {})).status, 200);
     assert.equal((await request(`/orders/${first.id}/pay`, other, {})).status, 409);
     const second = (await request('/orders', other, { appId: paid })).body; assert.notEqual(second.id, first.id);
+    pendingCapability=(await request(`/orders/${second.id}/payment-link`,other)).body.path.split('#t=')[1];
+    assert.equal((await request(`/pay/${first.id}/confirm`,null,{t:cancelledCapability})).status,409);
+    assert.equal((await request(`/pay/${second.id}/confirm`,null,{t:cancelledCapability})).status,404);
   });
   await check('hidden app unavailable to public, visible to admin', async () => {
     assert.equal((await request('/apps/' + free, admin, { published: false }, 'PUT')).status, 200);
@@ -129,8 +163,10 @@ async function run() {
     await stop(); await start('manual');
     assert.equal((await request('/config')).body.paymentMode, 'manual');
     assert.equal((await request(`/orders/${order.id}/pay`, customer, {})).status, 403);
+    assert.equal((await request(`/pay/${order.id}`,null,undefined,'GET',{'X-Payment-Token':payCapability})).body.status,'PAID');
     assert.equal((await fetch(base + `/api/apps/${paid}/download`, { headers: { Authorization: 'Bearer ' + customer } })).status, 200);
     const pending = (await request('/orders', other)).body.find(o => o.status === 'PENDING');
+    assert.equal((await request(`/pay/${pending.id}/confirm`,null,{t:pendingCapability})).status,403);
     assert.equal((await request(`/orders/${pending.id}/confirm`, admin, { reference: 'BANK-TEST-001' })).body.payment_source, 'MANUAL');
     assert.equal((await fetch(base + `/api/apps/${paid}/download`, { headers: { Authorization: 'Bearer ' + other } })).status, 200);
   });

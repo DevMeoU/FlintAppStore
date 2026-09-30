@@ -4,6 +4,7 @@ const { openDatabase } = require('../../shared/db');
 const { requireUser, internal } = require('../../shared/auth');
 const { route, errors, service, listen } = require('../../shared/http');
 const config = require('../../shared/config');
+const { paymentToken, validPaymentToken, publicInvoice } = require('../../shared/payment');
 async function start() {
   const db = openDatabase('order-service');
   await db.exec(`CREATE TABLE IF NOT EXISTS orders (
@@ -52,6 +53,31 @@ async function start() {
   app.get('/orders/:id', route(async (req, res) => {
     const found = await ownedOrder(req, res); if (!found) return;
     res.json(found.order);
+  }));
+  app.get('/orders/:id/payment-link', route(async (req, res) => {
+    const found = await ownedOrder(req, res); if (!found) return;
+    if (found.order.status !== 'PENDING') return res.status(409).json({ error: 'Đơn không còn chờ thanh toán' });
+    // Fragment tokens stay out of HTTP request URLs, access logs and referrers.
+    res.json({ path: `/pay/${found.order.id}#t=${paymentToken(found.order)}` });
+  }));
+  async function linkedOrder(req, res) {
+    const order = await db.get('SELECT * FROM orders WHERE id=?', [req.params.id]);
+    const token = req.get('x-payment-token') || req.body?.t;
+    if (!validPaymentToken(order, token)) { res.status(404).json({ error: 'Liên kết thanh toán không hợp lệ' }); return null; }
+    return order;
+  }
+  app.get('/pay/:id', route(async (req, res) => {
+    const order = await linkedOrder(req, res); if (!order) return;
+    res.json(publicInvoice(order));
+  }));
+  app.post('/pay/:id/confirm', route(async (req, res) => {
+    const order = await linkedOrder(req, res); if (!order) return;
+    if (config.paymentMode !== 'demo') return res.status(403).json({ error: 'Thanh toán mô phỏng đang tắt' });
+    if (order.status === 'CANCELLED') return res.status(409).json({ error: 'Đơn đã hủy' });
+    await db.run("UPDATE orders SET status='PAID',payment_source='DEMO',payment_reference=payment_code,verified_by=NULL,paid_at=CURRENT_TIMESTAMP WHERE id=? AND status='PENDING'", [order.id]);
+    const paid = await db.get('SELECT * FROM orders WHERE id=?', [order.id]);
+    if (paid.status !== 'PAID') return res.status(409).json({ error: 'Trạng thái đơn đã thay đổi' });
+    res.json(publicInvoice(paid));
   }));
   app.post('/orders/:id/pay', route(async (req, res) => {
     const found = await ownedOrder(req, res, false); if (!found) return;

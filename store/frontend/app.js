@@ -1,7 +1,7 @@
 const main = document.querySelector('#main');
 const dialog = document.querySelector('#auth-dialog');
 let token = sessionStorage.getItem('flint-token') || '';
-let user = null, config = {}, apps = [], orders = [], authMode = 'login', renderId = 0;
+let user = null, config = {}, apps = [], orders = [], authMode = 'login', renderId = 0, paymentPoll = null;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = value => Number(value).toLocaleString('vi-VN') + ' ₫';
 const size = value => value ? (value / 1024).toFixed(1) + ' KB' : 'Chưa có JAR';
@@ -60,13 +60,69 @@ async function detail(id, activeRender) {
   main.innerHTML = `<a class="muted" href="#catalog">← Trở về kho app</a><div class="detail-top">${appIcon(app)}<div><span class="eyebrow">${esc(app.category)}</span><h1>${esc(app.name)}</h1><span class="muted">Java archive · FlintOS</span></div></div><div class="two-cols"><section><div class="panel"><h2>Về ứng dụng</h2><p class="muted">${esc(app.description)}</p>${/^https:\/\/www\.figma\.com\//.test(app.design_url) ? `<a class="button quiet" href="${esc(app.design_url)}" target="_blank" rel="noreferrer">Xem thiết kế FlintUI ↗</a>` : ''}</div><div class="panel"><h2>Phiên bản JAR</h2>${app.releases.map(r => `<div class="release"><div><strong>${esc(r.version)}</strong><p class="muted">${size(r.size_bytes)} · ${esc(r.main_class)}</p><div class="hash">SHA-256: ${esc(r.sha256)}</div></div><button data-action="get" data-id="${app.id}" data-release="${r.id}">Tải ↓</button></div>`).join('') || '<p class="muted">Chưa có phiên bản được phát hành.</p>'}</div></section><aside class="panel"><h2>${owned(app.id) ? 'Bạn đã sở hữu app' : app.price_vnd ? money(app.price_vnd) : 'Miễn phí'}</h2><p class="muted">${app.price_vnd ? 'Mua một lần, tải lại và cập nhật không giới hạn trên tài khoản này.' : 'Tải và cài thoải mái, không cần thanh toán.'}</p><button class="primary full" data-action="get" data-id="${app.id}" ${!app.latest_release_id ? 'disabled' : ''}>${app.price_vnd && !owned(app.id) ? 'Mua ứng dụng' : 'Tải JAR mới nhất'}</button><div class="info-line"><span>Phiên bản</span><span>${esc(app.latest_version || '—')}</span></div><div class="info-line"><span>Dung lượng</span><span>${size(app.size_bytes)}</span></div><div class="info-line"><span>Lượt tải</span><span>${app.download_count}</span></div><p class="muted">Sau khi tải, chép JAR vào thiết bị và chạy bằng FlintOS. Trình duyệt chưa cài trực tiếp lên thiết bị.</p></aside></div>`;
 }
 function orderTable(rows, admin = false) {
-  return `<div class="table-wrap"><table><thead><tr><th>Đơn</th><th>Ứng dụng</th><th>Số tiền</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${rows.map(o => `<tr><td>#${o.id}</td><td>${esc(o.app_name)}</td><td>${money(o.amount_vnd)}</td><td>${badge(o.status)}</td><td>${o.status === 'PENDING' ? admin ? `<button data-action="confirm" data-id="${o.id}">Xác nhận</button>` : `<a class="button" href="/pay/${o.id}">Thanh toán →</a> <button class="quiet" data-action="cancel" data-id="${o.id}">Hủy</button>` : o.status === 'PAID' ? `<a class="button quiet" href="#app/${o.app_id}">Xem app</a>` : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Đơn</th><th>Ứng dụng</th><th>Số tiền</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${rows.map(o => `<tr><td>#${o.id}</td><td>${esc(o.app_name)}</td><td>${money(o.amount_vnd)}</td><td>${badge(o.status)}</td><td>${o.status === 'PENDING' ? `<a class="button quiet" href="/pay/${o.id}">QR thanh toán</a> ` + (admin ? `<button data-action="confirm" data-id="${o.id}">Xác nhận</button>` : `<button class="quiet" data-action="cancel" data-id="${o.id}">Hủy</button>`) : o.status === 'PAID' ? `<a class="button quiet" href="#app/${o.app_id}">Xem app</a>` : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function scannedPaymentToken() {
+  return /^\/pay\/\d+$/.test(location.pathname) ? new URLSearchParams(location.hash.slice(1)).get('t') || '' : '';
+}
+function paymentQr(link) {
+  const qr = window.qrcode(0, 'M');
+  qr.addData(link); qr.make();
+  return qr.createSvgTag({ cellSize: 6, margin: 24, scalable: true,
+    title: 'QR thanh toán đơn ứng dụng', alt: 'Quét để mở hóa đơn và thanh toán mô phỏng' });
+}
+function watchPayment(id, status, capability, activeRender) {
+  const controller = new AbortController(); paymentPoll = controller;
+  let timer;
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  const check = async () => {
+    if (controller.signal.aborted || activeRender !== renderId) return;
+    try {
+      if (!document.hidden) {
+        const bill = await api(capability ? '/pay/' + id : '/orders/' + id, {
+          signal: controller.signal, headers: capability ? { 'X-Payment-Token': capability } : {} });
+        if (controller.signal.aborted || activeRender !== renderId) return;
+        if (bill.status !== status) return render();
+        const label = document.querySelector('#pay-status');
+        if (label) label.textContent = 'Đang chờ thanh toán · Tự cập nhật sau khi quét QR';
+      }
+    } catch {
+      if (controller.signal.aborted) return;
+      const label = document.querySelector('#pay-status');
+      if (label) label.textContent = 'Chưa cập nhật được trạng thái. Hệ thống sẽ thử lại.';
+    }
+    if (!controller.signal.aborted && activeRender === renderId) timer = setTimeout(check, 3000);
+  };
+  timer = setTimeout(check, 3000);
 }
 async function payment(id, activeRender) {
-  if (!user) { main.innerHTML = '<div class="empty"><h2>Đăng nhập để thanh toán</h2><p>Mở đơn của bạn sau khi đăng nhập.</p><button class="primary" data-action="login">Đăng nhập</button></div>'; return; }
-  const order = await api('/orders/' + id); if (activeRender !== renderId) return;
-  main.innerHTML = `<a class="muted" href="#orders">← Đơn của tôi</a><section class="panel pay-panel"><div class="payment-icon">${order.status === 'PAID' ? '✓' : '↗'}</div><h1 class="full">${order.status === 'PAID' ? 'Thanh toán thành công' : order.status === 'CANCELLED' ? 'Đơn đã hủy' : 'Thanh toán ứng dụng'}</h1><p class="muted full">${esc(order.app_name)} · Đơn #${order.id}</p><div class="payment-total">${money(order.amount_vnd)}</div><div class="info-line"><span>Nội dung chuyển khoản</span><strong class="payment-code">${esc(order.payment_code)}</strong></div><div class="info-line"><span>Trạng thái</span>${badge(order.status)}</div><p class="notice">${config.paymentMode === 'demo' ? 'Đây là chuyển khoản mô phỏng. Nhấn nút bên dưới để giả lập thanh toán thành công. Không có tiền thật được chuyển.' : 'Chuyển khoản theo hướng dẫn của quản trị viên và dùng đúng mã đơn. Quyền tải mở sau khi quản trị viên xác nhận.'}</p>${order.status === 'PENDING' ? config.paymentMode === 'demo' ? `<button class="primary full" data-action="pay" data-id="${order.id}">Thanh toán mô phỏng · ${money(order.amount_vnd)}</button>` : '<p class="muted">Đang chờ quản trị viên xác nhận chuyển khoản.</p>' : order.status === 'PAID' ? `<button class="primary full" data-action="get" data-id="${order.app_id}">Tải JAR ngay ↓</button>` : '<a class="button full" href="#catalog">Về kho app</a>'}</section>`;
-  if (order.status === 'PAID') main.querySelector('.notice').textContent = order.payment_source === 'DEMO' ? 'Đã thanh toán mô phỏng. Quyền tải đã mở; không có tiền thật được chuyển.' : 'Đã xác nhận thanh toán. Bạn có thể tải lại mọi phiên bản của app.';
+  const capability = scannedPaymentToken();
+  if (!capability && !user) { main.innerHTML = '<div class="empty"><h2>Đăng nhập để thanh toán</h2><p>Mở đơn của bạn sau khi đăng nhập, hoặc quét QR thanh toán của đơn.</p><button class="primary" data-action="login">Đăng nhập</button></div>'; return; }
+  const order = await api(capability ? '/pay/' + id : '/orders/' + id, { headers: capability ? { 'X-Payment-Token': capability } : {} });
+  if (activeRender !== renderId) return;
+  const pending = order.status === 'PENDING';
+  let link = '';
+  if (pending && !capability) {
+    let issued;
+    try { issued = await api(`/orders/${id}/payment-link`); }
+    catch (error) {
+      const latest = await api('/orders/' + id);
+      if (activeRender !== renderId) return;
+      if (latest.status !== order.status) return render();
+      throw error;
+    }
+    if (activeRender !== renderId) return;
+    link = new URL(issued.path, location.origin).href;
+  }
+  const canDownload = !capability && order.user_id === user?.id;
+  main.innerHTML = `<a class="muted" href="${capability ? '#catalog' : user?.role === 'ADMIN' ? '#admin' : '#orders'}">← ${capability ? 'Flint App Store' : user?.role === 'ADMIN' ? 'Quản lý kho' : 'Đơn của tôi'}</a><section class="panel pay-panel"><div class="payment-icon">${order.status === 'PAID' ? '✓' : '↗'}</div><h1 class="full">${order.status === 'PAID' ? 'Thanh toán thành công' : order.status === 'CANCELLED' ? 'Đơn đã hủy' : 'Thanh toán ứng dụng'}</h1><p class="muted full">${esc(order.app_name)} · Đơn #${order.id}</p><div class="payment-total">${money(order.amount_vnd)}</div><div class="info-line"><span>Nội dung chuyển khoản</span><strong class="payment-code">${esc(order.payment_code)}</strong></div><div class="info-line"><span>Trạng thái</span>${badge(order.status)}</div>${link ? `<div class="payment-qr"><h2>Quét QR để thanh toán</h2><p class="muted">Dùng điện thoại quét mã, mở link và nhấn thanh toán mô phỏng.</p><div id="pay-qr" class="qr-code"></div><div class="qr-link-row"><input id="pay-link" aria-label="Link thanh toán QR" readonly value="${esc(link)}"><button data-action="copy-pay-link">Copy link</button></div><a class="button quiet full" href="${esc(link)}" target="_blank" rel="noreferrer">Mở trang thanh toán ↗</a></div>` : ''}<p class="notice">${order.status === 'PAID' ? 'Quyền tải đã mở cho tài khoản mua app. Quay lại tài khoản đó để tải JAR. Không có tiền thật được chuyển khi thanh toán mô phỏng.' : config.paymentMode === 'demo' ? 'Đây là chuyển khoản mô phỏng. Nhấn nút bên dưới để giả lập thanh toán thành công. Không có tiền thật được chuyển.' : 'Chuyển khoản theo hướng dẫn của quản trị viên. Quyền tải mở sau khi quản trị viên xác nhận.'}</p>${pending ? `<p id="pay-status" class="payment-status" role="status">Đang chờ thanh toán · Tự cập nhật sau khi quét QR</p>` + (config.paymentMode === 'demo' && (capability || canDownload) ? `<button class="primary full" data-action="${capability ? 'pay-linked' : 'pay'}" data-id="${order.id}">Thanh toán mô phỏng · ${money(order.amount_vnd)}</button>` : '<p class="muted">Đang chờ xác nhận thanh toán.</p>') : order.status === 'PAID' && canDownload ? `<button class="primary full" data-action="get" data-id="${order.app_id}">Tải JAR ngay ↓</button>` : '<a class="button full" href="#catalog">Về kho app</a>'}</section>`;
+  if (link) {
+    try { document.querySelector('#pay-qr').innerHTML = paymentQr(link); }
+    catch { document.querySelector('#pay-qr').textContent = 'Chưa tạo được QR. Bạn có thể copy hoặc mở link bên dưới.'; }
+    // Keep the full code above the mobile navigation so a camera can scan it.
+    if (window.matchMedia('(max-width:600px)').matches) document.querySelector('#pay-qr').scrollIntoView({ block: 'center' });
+  }
+  if (pending) watchPayment(id, order.status, capability, activeRender);
 }
 function adminForm(app = {}) {
   const edit = !!app.id;
@@ -78,6 +134,7 @@ async function admin(activeRender) {
   main.innerHTML = `<span class="eyebrow">STORE MANAGEMENT</span><h1>Quản lý kho ứng dụng</h1><p class="muted">Phát hành JAR, chỉnh giá và theo dõi thanh toán.</p><div class="two-cols"><div class="panel" id="admin-form">${adminForm()}</div><section class="panel"><h2>Phát hành phiên bản JAR</h2><form id="release-form"><label>Ứng dụng<select name="appId" required>${apps.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label><label>Phiên bản<input name="version" placeholder="1.0.0" required pattern="[a-zA-Z0-9._-]{1,40}"></label><label>File JAR (tối đa 25MB)<input name="jar" type="file" accept=".jar" required></label><p class="muted">File được kiểm tra manifest, entry point và CRC trước khi lưu vào database. Phiên bản đã phát hành không bị ghi đè.</p><button class="primary" type="submit" ${!apps.length ? 'disabled' : ''}>Upload & phát hành</button></form></section></div><section class="panel"><h2>Danh sách ứng dụng</h2>${apps.map(a => `<div class="admin-app"><div><strong>${esc(a.name)}</strong> <span class="muted">${a.published ? 'Đang hiển thị' : 'Đã ẩn'}</span><p class="muted">${a.price_vnd ? money(a.price_vnd) : 'Miễn phí'} · ${esc(a.latest_version || 'Chưa có JAR')}</p></div><div class="action-row"><button data-action="edit" data-id="${a.id}">Sửa thông tin / giá</button><button data-action="publish" data-id="${a.id}">${a.published ? 'Ẩn app' : 'Hiển thị'}</button></div></div>`).join('')}</section><section class="panel"><h2>Tất cả đơn thanh toán</h2>${allOrders.length ? orderTable(allOrders, true) : '<p class="muted">Chưa có đơn.</p>'}</section>`;
 }
 async function render() {
+  paymentPoll?.abort(); paymentPoll = null;
   const current = ++renderId;
   const paymentPath = location.pathname.match(/^\/pay\/(\d+)$/);
   const route = paymentPath ? 'pay/' + paymentPath[1] : location.hash.slice(1) || 'catalog';
@@ -121,7 +178,12 @@ document.addEventListener('click', async event => {
       if (!app.price_vnd || owned(app.id)) await download(id, release);
       else if (!user) openAuth();
       else { const order = await api('/orders', { method: 'POST', body: { appId: app.id } }); if (order.status === 'PAID') { await render(); await download(id, release); } else location.href = '/pay/' + order.id; }
-    } else if (action === 'pay') { await api(`/orders/${id}/pay`, { method: 'POST', body: {} }); toast('Thanh toán mô phỏng thành công. Quyền tải đã mở.'); await render(); }
+    } else if (action === 'copy-pay-link') {
+      const input = document.querySelector('#pay-link');
+      try { await navigator.clipboard.writeText(input.value); toast('Đã copy link thanh toán.'); }
+      catch { input.select(); toast('Hãy copy link đã chọn.'); }
+    } else if (action === 'pay-linked') { await api(`/pay/${id}/confirm`, { method: 'POST', body: { t: scannedPaymentToken() } }); toast('Thanh toán mô phỏng thành công.'); await render(); }
+    else if (action === 'pay') { await api(`/orders/${id}/pay`, { method: 'POST', body: {} }); toast('Thanh toán mô phỏng thành công. Quyền tải đã mở.'); await render(); }
     else if (action === 'cancel') { await api(`/orders/${id}/cancel`, { method: 'POST', body: {} }); await render(); }
     else if (action === 'confirm') { const reference = prompt('Mã giao dịch chuyển khoản đã nhận:'); if (reference) { await api(`/orders/${id}/confirm`, { method: 'POST', body: { reference } }); await render(); } }
     else if (action === 'edit') { document.querySelector('#admin-form').innerHTML = adminForm(apps.find(a => a.id === Number(id))); document.querySelector('#admin-form').scrollIntoView({ behavior: 'smooth' }); }
